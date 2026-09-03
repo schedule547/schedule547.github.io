@@ -1,18 +1,70 @@
-{
-  "name": "Расписание547",
-  "short_name": "Расписание547",
-  "description": "Анализ расписания школы №547: нагрузка учителей, свободные кабинеты, поиск по классам",
-  "start_url": "./index.html",
-  "scope": "./",
-  "display": "standalone",
-  "orientation": "any",
-  "background_color": "#ffffff",
-  "theme_color": "#1a56db",
-  "lang": "ru",
-  "icons": [
-    { "src": "icon192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icon512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icon192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "icon512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
-  ]
-}
+// Service worker «Расписание547».
+// При каждом обновлении файла увеличивайте номер версии ниже —
+// это заставляет браузер удалить старый кэш и подтянуть свежие файлы.
+const CACHE_VERSION = 'v1.3.3';
+const CACHE_NAME = 'raspisanie547-' + CACHE_VERSION;
+
+// Всё, что нужно приложению для работы офлайн: сама страница (как запасной
+// вариант на случай отсутствия сети), манифест, иконки и библиотека SheetJS.
+const APP_SHELL = [
+  './',
+  './index.html',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((names) => Promise.all(
+        names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+
+  // Саму страницу (открытие приложения / обновление вкладки) — сначала сеть.
+  // Так правки в парсере доходят до пользователей сразу же, как только у них
+  // есть интернет; кэш подключается только если сети нет вообще.
+  const isPageRequest = event.request.mode === 'navigate' || event.request.url.endsWith('/index.html');
+  if (isPageRequest) {
+    event.respondWith(
+      fetch(new Request(event.request, { cache: 'no-store' }))
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Всё остальное (библиотека SheetJS, иконки, манифест) меняется редко —
+  // для них по-прежнему быстрее и надёжнее «сначала кэш, потом сеть».
+  event.respondWith(
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+      return fetch(event.request).then((response) => {
+        if (response && response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        }
+        return response;
+      }).catch(() => cached);
+    })
+  );
+});
