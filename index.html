@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Расписание547 v1.0</title>
+
+<!-- PWA: манифест и иконки — благодаря им приложение можно установить
+     на Android («Добавить на главный экран») как отдельное приложение. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1a56db">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Расписание547">
+
+<!--
+  SheetJS (xlsx) подключён с CDN. Если на рабочих компьютерах нет доступа
+  в интернет — см. инструкцию в конце чата: нужно скачать xlsx.full.min.js
+  один раз и вставить его содержимое прямо сюда, между <script></script>,
+  вместо строки со src. Тогда файл будет работать полностью офлайн.
+  (Для PWA-версии это не обязательно: сервис-воркер сам закэширует эту
+  библиотеку при первом заходе — см. sw.js.)
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+  :root{
+    --ink:#1f2d2a;
+    --paper:#f6f5f0;
+    --panel:#ffffff;
+    --line:#d8d5c8;
+    --accent:#2f5d50;
+    --accent-soft:#e4efe9;
+    --gold:#c99a3d;
+    --free-bg:#eef0ea;
+    --free-text:#6b6f63;
+    --busy-bg:#e2efe4;
+    --busy-line:#a9c9b4;
+    --danger:#b23b3b;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Segoe UI', Tahoma, Verdana, Arial, sans-serif;
+    font-size:15px;
+    line-height:1.4;
+  }
+  .app{max-width:1100px;margin:0 auto;padding:24px 20px 60px;}
+
+  /* ---------- начальный экран ---------- */
+  .hero{
+    min-height:70vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+    gap:10px;
+  }
+  .hero h1{
+    font-size:28px;
+    margin:0 0 4px;
+    letter-spacing:.2px;
+  }
+  .hero p{margin:0;color:#5a5f54;font-size:15px;}
+  .ledger{
+    width:64px;height:64px;border-radius:14px;
+    background:var(--accent);
+    color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-size:30px;
+    margin-bottom:6px;
+    box-shadow:0 6px 16px rgba(47,93,80,.25);
+  }
+
+  /* ---------- общие элементы ---------- */
+  .btn{
+    appearance:none;
+    border:1px solid var(--accent);
+    background:var(--accent);
+    color:#fff;
+    padding:10px 18px;
+    border-radius:8px;
+    font-size:14.5px;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transition:background .15s, transform .05s;
+  }
+  .btn:hover{background:#264d43;}
+  .btn:active{transform:translateY(1px);}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+  .btn.secondary{
+    background:#fff;color:var(--accent);
+  }
+  .btn.secondary:hover{background:var(--accent-soft);}
+
+  select, input[type=file]{
+    font:inherit;
+    padding:9px 12px;
+    border-radius:8px;
+    border:1px solid var(--line);
+    background:#fff;
+    color:var(--ink);
+  }
+  select{min-width:220px;}
+
+  .sticky-header{
+    position:sticky;
+    top:0;
+    background:var(--paper);
+    z-index:10;
+    padding-top:2px;
+  }
+  .topbar{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:14px;
+    padding-bottom:14px;
+    border-bottom:1px solid var(--line);
+  }
+  .status{font-size:13.5px;color:#5a5f54;}
+  .status.error{color:var(--danger);}
+  .status.ok{color:var(--accent);}
+
+  .stats{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    margin:16px 0 6px;
+  }
+  .stat-pill{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:999px;
+    padding:5px 14px;
+    font-size:13px;
+    color:#4a4f43;
+  }
+  .stat-pill b{color:var(--ink);}
+
+  /* ---------- вкладки ---------- */
+  .tabs{
+    display:flex;
+    gap:4px;
+    margin-top:20px;
+    border-bottom:1px solid var(--line);
+  }
+  .tab-btn{
+    appearance:none;
+    background:none;
+    border:none;
+    padding:10px 16px;
+    font-size:14.5px;
+    color:#6b6f63;
+    cursor:pointer;
+    border-bottom:2px solid transparent;
+    margin-bottom:-1px;
+  }
+  .tab-btn.active{
+    color:var(--accent);
+    border-bottom-color:var(--gold);
+    font-weight:600;
+  }
+  .tab-panel{display:none;padding-top:18px;}
+  .tab-panel.active{display:block;}
+
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
+  .empty{color:#8a8d80;padding:24px 4px;font-size:14.5px;}
+
+  .schedule-list{margin-top:16px;}
+  .day-title{
+    font-size:15px;font-weight:700;color:var(--accent);
+    margin:16px 0 6px;
+  }
+  .lesson-line{padding:3px 0;font-size:14.5px;}
+  .lesson-sub{padding:0 0 3px 14px;font-size:13px;color:#4a4f43;}
+  .divider{border:none;border-top:1px solid var(--line);margin:8px 0;}
+
+  .slot{
+    padding:10px 12px;
+    border-radius:6px;
+    margin-bottom:6px;
+    font-size:14px;
+  }
+  .slot.busy{background:var(--busy-bg);border:1px solid var(--busy-line);}
+  .slot.free{background:var(--free-bg);color:var(--free-text);}
+
+  .room-stats{
+    margin-top:10px;font-size:13px;font-weight:600;color:#4a4f43;
+  }
+
+  footer.hint{
+    margin-top:40px;font-size:12.5px;color:#9a9d8f;text-align:center;
+  }
+</style>
+</head>
+<body>
+
+<div class="app" id="app"></div>
+
+<script>
+/* =========================================================
+   1. ПАРСЕР (портирован из schedule_parser.py)
+   ========================================================= */
+const DAYS = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница'];
+const CLASS_LETTERS = 'абвгдежзиклмнопрстуфхцчшщъыьэюя';
+
+function createScheduleData() {
+  return { teachers: {}, classes: {}, rooms: {}, subjects: {} };
+}
+function cell(row, idx) {
+  const v = row[idx];
+  if (v === undefined || v === null) return '';
+  return String(v).trim();
+}
+function cleanValue(value) {
+  if (value === undefined || value === null || value === '') return '';
+  let cleaned = String(value).trim().replace(/"/g, '');
+  // убираем случайные одиночные кавычки/апострофы по краям значения —
+  // такие артефакты копипаста встречаются в исходном файле, например «Лит-ра'»
+  cleaned = cleaned.replace(/^[''`\u2018\u2019]+|[''`\u2018\u2019]+$/g, '').trim();
+  return cleaned === 'nan' ? '' : cleaned;
+}
+function extractClassName(rawValue) {
+  const value = cleanValue(rawValue);
+  if (!value) return null;
+  const re = new RegExp('^\\d+[' + CLASS_LETTERS + ']$', 'i');
+  return re.test(value) ? value : null;
+}
+function isDaysHeader(row) {
+  // раньше проверялось только, что в первой колонке дня стоит «понедельник»/«вторник» —
+  // это ломалось на неполных неделях (например, когда выложили только среду и четверг).
+  // теперь ищем любое известное название дня в любой из колонок-заголовков дней.
+  return Object.keys(mapDayColumns(row)).length > 0;
+}
+function mapDayColumns(row) {
+  // важно: subject/room берутся из ТОЙ ЖЕ колонки, где реально найдено название дня,
+  // а не пересчитываются по порядковому номеру среди найденных дней. Это защищает от
+  // ситуации, когда в файле неполной недели пустые колонки понедельника/вторника
+  // physически остаются в таблице (а не удаляются) — иначе данные читались бы не из тех колонок.
+  const dayMap = {};
+  const maxCol = Math.min(12, row.length);
+  for (let colIdx = 1; colIdx < maxCol; colIdx += 2) {
+    const dayName = cell(row, colIdx).toLowerCase();
+    if (DAYS.includes(dayName)) {
+      dayMap[dayName] = { subject: colIdx, room: colIdx + 1 };
+    }
+  }
+  return dayMap;
+}
+function extractLessonNumber(rawValue) {
+  const value = cleanValue(rawValue);
+  if (!value) return null;
+  const num = parseInt(parseFloat(value), 10);
+  if (Number.isNaN(num)) return null;
+  return (num >= 1 && num <= 10) ? num : null;
+}
+/* ---------- Нормализация названий предметов ----------
+   Один и тот же предмет в исходном файле часто записан по-разному:
+   «Геометрия» / «Геометр.» / опечатки вроде «Геметр.». Чтобы такие
+   записи не расходились по разным карточкам, приводим их к единому
+   каноническому названию через subjectKey() — ключ без пробелов, точек
+   и без учёта регистра. Благодаря этому, например, «Рус. яз.» и
+   «Рус.яз.» совпадают автоматически, даже без явной записи в словаре;
+   в словарь попадают только реальные сокращения/опечатки/короткие формы. */
+const SUBJECT_CANON = {
+  'русяз': 'Русский язык', 'русз': 'Русский язык', 'рус': 'Русский язык',
+  'русскийязык': 'Русский язык', 'русский': 'Русский язык',
+  'англяз': 'Английский язык', 'англ': 'Английский язык',
+  'английский': 'Английский язык', 'английскийязык': 'Английский язык',
+  'китяз': 'Китайский язык', 'кит': 'Китайский язык',
+  'китайский': 'Китайский язык', 'китайскийязык': 'Китайский язык',
+  'матем': 'Математика', 'мат': 'Математика', 'математика': 'Математика',
+  'алгебра': 'Алгебра',
+  'геометр': 'Геометрия', 'геметр': 'Геометрия', 'геометрия': 'Геометрия',
+  'физика': 'Физика',
+  'биолог': 'Биология', 'биол': 'Биология', 'биология': 'Биология',
+  'географ': 'География', 'геогр': 'География', 'география': 'География',
+  'история': 'История',
+  'истспб': 'История СПб', 'историяспб': 'История СПб',
+  'лит-ра': 'Литература', 'литра': 'Литература', 'литература': 'Литература',
+  'инф-ка': 'Информатика', 'инф': 'Информатика', 'информатика': 'Информатика',
+  'общ-ние': 'Обществознание', 'общ': 'Обществознание', 'обществознание': 'Обществознание',
+  'химия': 'Химия', 'хим': 'Химия',
+  'чтение': 'Чтение', 'чтене': 'Чтение',
+  'изо': 'ИЗО',
+  'окрмир': 'Окружающий мир', 'окружающиймир': 'Окружающий мир',
+  'физ-ра': 'Физкультура', 'физра': 'Физкультура', 'физкультура': 'Физкультура',
+  'плав-е': 'Плавание', 'плавание': 'Плавание',
+};
+function subjectKey(base) {
+  return base.toLowerCase().replace(/\s+/g, '').replace(/\.+/g, '');
+}
+function normalizeSubject(rawValue) {
+  const value = cleanValue(rawValue);
+  if (!value) return value;
+  // факультатив/элективный курс помечается «(Э)» — переносим пометку отдельно,
+  // чтобы «Общ(Э)» и «Общ-ние» находили один и тот же предмет в словаре
+  const electiveMatch = value.match(/\(\s*э\s*\)/i);
+  const base = electiveMatch ? value.slice(0, electiveMatch.index).trim() : value;
+  if (!base) return value;
+  const canonical = SUBJECT_CANON[subjectKey(base)];
+  return (canonical || base) + (electiveMatch ? ' (Э)' : '');
+}
+
+/* ---------- Определение «это учитель», а не «это предмет» ----------
+   Раньше это делалось по вручную собранному списку сокращений предметов
+   (NON_TEACHERS) — каждый новый вариант сокращения приходилось добавлять
+   туда отдельно, и именно рассинхронизация с реальными сокращениями и
+   приводила к путанице учитель/предмет. Теперь список известных
+   предметов один — SUBJECT_CANON, тот же, что убирает дубли предметов,
+   а учитель распознаётся по формату ФИО «Фамилия И.О.», а не по
+   исключению из списка. */
+const TEACHER_NAME_RE = /^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+[А-ЯЁ]\.\s*[А-ЯЁ]?\.?$/;
+const TEACHER_FULLNAME_RE = /^[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+$/;
+const VACANCY_RE = /^вакан/i;
+
+function isKnownSubjectText(text) {
+  const electiveMatch = text.match(/\(\s*э\s*\)/i);
+  const base = electiveMatch ? text.slice(0, electiveMatch.index).trim() : text;
+  if (!base) return false;
+  return Object.prototype.hasOwnProperty.call(SUBJECT_CANON, subjectKey(base));
+}
+function isVacancy(text) {
+  return VACANCY_RE.test(text);
+}
+function isTeacherName(text) {
+  if (!text) return false;
+  text = cleanValue(text);
+  if (!text) return false;
+  if (isVacancy(text)) return true; // «Вакансия» стоит на месте учителя — это не предмет
+  if (isKnownSubjectText(text)) return false; // это точно известный предмет, а не ФИО
+  if (TEACHER_NAME_RE.test(text)) return true;
+  if (TEACHER_FULLNAME_RE.test(text)) return true;
+  return false;
+}
+function extractLessonsFromBlock(lessonRows, subjectCol, roomCol) {
+  if (!lessonRows.length) return [];
+  const firstRow = lessonRows[0];
+  const mainSubject = cleanValue(cell(firstRow, subjectCol));
+  const mainRoom = cleanValue(cell(firstRow, roomCol));
+  if (!mainSubject) return [];
+
+  const subjectVariants = [[mainSubject, mainRoom]];
+  const teachers = [];
+  for (let i = 1; i < lessonRows.length; i++) {
+    const row = lessonRows[i];
+    const subjectValue = cleanValue(cell(row, subjectCol));
+    const roomValue = cleanValue(cell(row, roomCol));
+    if (subjectValue && !isTeacherName(subjectValue)) {
+      if (normalizeSubject(subjectValue) === normalizeSubject(mainSubject)) {
+        subjectVariants.push([subjectValue, roomValue]);
+      }
+    } else if (subjectValue && isTeacherName(subjectValue)) {
+      teachers.push([subjectValue, roomValue]);
+    }
+  }
+  if (!teachers.length) return [[mainSubject, mainRoom ? [mainRoom] : [], []]];
+
+  const resultLessons = [];
+  if (subjectVariants.length > 1) {
+    for (let i = 0; i < subjectVariants.length; i++) {
+      const [subject, room] = subjectVariants[i];
+      if (i < teachers.length) {
+        const [teacher, teacherRoom] = teachers[i];
+        resultLessons.push([subject, [teacherRoom || room], [teacher]]);
+      }
+    }
+    if (teachers.length > subjectVariants.length) {
+      const lastRoom = subjectVariants.length ? subjectVariants[subjectVariants.length - 1][1] : mainRoom;
+      for (let i = subjectVariants.length; i < teachers.length; i++) {
+        const [teacher, teacherRoom] = teachers[i];
+        resultLessons.push([mainSubject, [teacherRoom || lastRoom], [teacher]]);
+      }
+    }
+  } else {
+    let rooms = mainRoom ? [mainRoom] : [];
+    for (const [, teacherRoom] of teachers) {
+      if (teacherRoom && !rooms.includes(teacherRoom)) rooms.push(teacherRoom);
+    }
+    if (!rooms.length && mainRoom) rooms = [mainRoom];
+    for (let i = 0; i < teachers.length; i++) {
+      const [teacher, teacherRoom] = teachers[i];
+      let roomToUse;
+      if (teacherRoom) roomToUse = teacherRoom;
+      else if (i < rooms.length) roomToUse = rooms[i];
+      else roomToUse = rooms.length ? rooms[rooms.length - 1] : '';
+      resultLessons.push([mainSubject, [roomToUse], [teacher]]);
+    }
+  }
+  return resultLessons;
+}
+function processLessonBlock(rows, startRow, className, lessonNum, dayColumns, scheduleData) {
+  const lessonRows = [rows[startRow] || []];
+  let currentRow = startRow + 1;
+  while (currentRow < rows.length) {
+    const row = rows[currentRow] || [];
+    if (extractClassName(cell(row, 0)) || extractLessonNumber(cell(row, 0)) !== null) break;
+    const allEmpty = row.length === 0 || row.every(c => cleanValue(c) === '');
+    if (allEmpty) break;
+    lessonRows.push(row);
+    currentRow++;
+  }
+  for (const [day, cols] of Object.entries(dayColumns)) {
+    const lessonsForDay = extractLessonsFromBlock(lessonRows, cols.subject, cols.room);
+    for (const [subject, rooms, teachers] of lessonsForDay) {
+      if (!subject) continue;
+      const canonicalSubject = normalizeSubject(subject);
+      teachers.forEach((teacher, i) => {
+        const teacherRoom = i < rooms.length ? rooms[i] : (rooms.length ? rooms[0] : '');
+        const lessonData = { subject: canonicalSubject, room: teacherRoom, teacher, class: className, lesson_num: lessonNum, day };
+        if (!scheduleData.classes[className][day][lessonNum]) scheduleData.classes[className][day][lessonNum] = [];
+        scheduleData.classes[className][day][lessonNum].push(lessonData);
+      });
+    }
+  }
+}
+function findNextLessonRow(rows, startRow) {
+  for (let i = startRow; i < rows.length; i++) {
+    const row = rows[i] || [];
+    if (extractLessonNumber(cell(row, 0)) !== null) return i;
+    if (extractClassName(cell(row, 0))) return i;
+  }
+  return rows.length;
+}
+function buildSecondaryStructures(scheduleData) {
+  for (const classData of Object.values(scheduleData.classes)) {
+    for (const lessons of Object.values(classData)) {
+      for (const lessonList of Object.values(lessons)) {
+        for (const lesson of lessonList) {
+          if (lesson.teacher) (scheduleData.teachers[lesson.teacher] ??= []).push(lesson);
+          if (lesson.room) (scheduleData.rooms[lesson.room] ??= []).push(lesson);
+          if (lesson.subject) (scheduleData.subjects[lesson.subject] ??= []).push(lesson);
+        }
+      }
+    }
+  }
+}
+function parseRows(rows) {
+  const scheduleData = createScheduleData();
+  let currentClass = null;
+  let dayColumns = {};
+  let rowIdx = 0;
+  while (rowIdx < rows.length) {
+    const row = rows[rowIdx] || [];
+    const className = extractClassName(cell(row, 0));
+    if (className) {
+      currentClass = className;
+      scheduleData.classes[currentClass] = {};
+      DAYS.forEach(d => { scheduleData.classes[currentClass][d] = {}; });
+      rowIdx++; continue;
+    }
+    if (isDaysHeader(row)) { dayColumns = mapDayColumns(row); rowIdx++; continue; }
+    const lessonNum = extractLessonNumber(cell(row, 0));
+    if (lessonNum !== null && currentClass && Object.keys(dayColumns).length) {
+      processLessonBlock(rows, rowIdx, currentClass, lessonNum, dayColumns, scheduleData);
+      rowIdx = findNextLessonRow(rows, rowIdx + 1);
+    } else { rowIdx++; }
+  }
+  buildSecondaryStructures(scheduleData);
+  return scheduleData;
+}
+
+/* =========================================================
+   1б. ПАРСЕР ФОРМАТА «ПЕДАГОГИ»
+   ========================================================= */
+/* В этом формате роли полей зеркально меняются по сравнению с форматом
+   «Классы»: блок озаглавлен ФИО педагога (а не классом), и в ячейке,
+   где раньше был просто предмет, теперь склеены класс и предмет через
+   дефис — например «9а-Труд», «8д-Инф-ка» (дефис внутри самого предмета,
+   как в «Инф-ка», не мешает — класс всегда отделяется по ПЕРВОМУ дефису).
+   Учитель в этом формате не пишется в каждой строке отдельно — он один
+   и тот же для всего блока, поэтому отдельного распознавания
+   учитель/предмет здесь не требуется. Нормализация названий предметов
+   (SUBJECT_CANON/normalizeSubject) используется точно так же, как и в
+   формате «Классы» — проблема разных сокращений одна и та же в обоих
+   форматах. */
+function isSoleCellHeader(row) {
+  const v = cleanValue(cell(row, 0));
+  if (!v) return false;
+  if (extractLessonNumber(v) !== null) return false;
+  if (isDaysHeader(row)) return false;
+  for (let i = 1; i < row.length; i++) {
+    if (cleanValue(cell(row, i)) !== '') return false;
+  }
+  return true;
+}
+function parseClassSubject(rawValue) {
+  const value = cleanValue(rawValue);
+  if (!value) return null;
+  const idx = value.indexOf('-');
+  if (idx <= 0) return null; // нет дефиса-разделителя, либо класс пустой — не наш формат ячейки
+  const classPart = value.slice(0, idx).trim();
+  const subjectPart = value.slice(idx + 1).trim();
+  if (!classPart || !subjectPart) return null;
+  return { class: classPart, subject: subjectPart };
+}
+function findNextTeacherBlockRow(rows, startRow) {
+  for (let i = startRow; i < rows.length; i++) {
+    const row = rows[i] || [];
+    if (extractLessonNumber(cell(row, 0)) !== null) return i;
+    if (isSoleCellHeader(row)) return i;
+  }
+  return rows.length;
+}
+function ensureClassEntry(scheduleData, className) {
+  if (!scheduleData.classes[className]) {
+    scheduleData.classes[className] = {};
+    DAYS.forEach(d => { scheduleData.classes[className][d] = {}; });
+  }
+}
+function processTeacherLessonBlock(rows, startRow, teacherName, lessonNum, dayColumns, scheduleData) {
+  const lessonRows = [rows[startRow] || []];
+  let currentRow = startRow + 1;
+  while (currentRow < rows.length) {
+    const row = rows[currentRow] || [];
+    if (isSoleCellHeader(row) || extractLessonNumber(cell(row, 0)) !== null) break;
+    const allEmpty = row.length === 0 || row.every(c => cleanValue(c) === '');
+    if (allEmpty) break;
+    lessonRows.push(row); // строки-продолжения — параллельные группы у того же педагога в это же время
+    currentRow++;
+  }
+  for (const [day, cols] of Object.entries(dayColumns)) {
+    for (const row of lessonRows) {
+      const raw = cell(row, cols.subject);
+      const parsed = parseClassSubject(raw);
+      if (!parsed) continue;
+      const room = cleanValue(cell(row, cols.room));
+      const className = parsed.class;
+      const subject = normalizeSubject(parsed.subject);
+      ensureClassEntry(scheduleData, className);
+      const lessonData = { subject, room, teacher: teacherName, class: className, lesson_num: lessonNum, day };
+      if (!scheduleData.classes[className][day][lessonNum]) scheduleData.classes[className][day][lessonNum] = [];
+      scheduleData.classes[className][day][lessonNum].push(lessonData);
+    }
+  }
+}
+function parseTeacherRows(rows) {
+  const scheduleData = createScheduleData();
+  let currentTeacher = null;
+  let dayColumns = {};
+  let rowIdx = 0;
+  while (rowIdx < rows.length) {
+    const row = rows[rowIdx] || [];
+    if (isSoleCellHeader(row)) {
+      currentTeacher = cleanValue(cell(row, 0));
+      rowIdx++; continue;
+    }
+    if (isDaysHeader(row)) { dayColumns = mapDayColumns(row); rowIdx++; continue; }
+    const lessonNum = extractLessonNumber(cell(row, 0));
+    if (lessonNum !== null && currentTeacher && Object.keys(dayColumns).length) {
+      processTeacherLessonBlock(rows, rowIdx, currentTeacher, lessonNum, dayColumns, scheduleData);
+      rowIdx = findNextTeacherBlockRow(rows, rowIdx + 1);
+    } else { rowIdx++; }
+  }
+  buildSecondaryStructures(scheduleData);
+  return scheduleData;
+}
+
+/* ---------- Автоопределение формата файла ----------
+   Заголовок самого первого блока в файле — это либо название класса
+   («1а», «9б» — формат «Классы»), либо ФИО педагога (формат «Педагоги»).
+   По этому единственному признаку выбирается нужный парсер. */
+function detectScheduleFormat(rows) {
+  for (const row of rows) {
+    if (isDaysHeader(row)) break; // дошли до первого блока, не встретив заголовок — формат не определить
+    const v = cleanValue(cell(row, 0));
+    if (!v) continue;
+    return extractClassName(v) ? 'classes' : 'teachers';
+  }
+  return 'classes';
+}
+function parseSchedule(rows) {
+  return detectScheduleFormat(rows) === 'teachers' ? parseTeacherRows(rows) : parseRows(rows);
+}
+
+/* =========================================================
+   2. СОСТОЯНИЕ + УТИЛИТЫ
+   ========================================================= */
+let scheduleData = createScheduleData();
+let currentFileName = '';
+const app = document.getElementById('app');
+const dayOrder = DAYS;
+const APP_NAME = 'Расписание547';
+const APP_VERSION = '1.0';
+const APP_AUTHOR = 'Вощиков Л.Д.';
+const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+/* =========================================================
+   3. НАЧАЛЬНЫЙ ЭКРАН
+   ========================================================= */
+function renderInitial(statusMsg, statusType) {
+  app.innerHTML = `
+    <div class="hero">
+      <div class="ledger">📚</div>
+      <h1>${APP_NAME}</h1>
+      <p style="margin-bottom:2px">Версия ${APP_VERSION}</p>
+      <p>Загрузите файл Excel с расписанием, чтобы начать работу</p>
+      <div style="height:8px"></div>
+      <label class="btn" for="fileInput">📁 Загрузить файл Excel</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
+      <div class="status ${statusType||''}" style="margin-top:10px">${statusMsg ? esc(statusMsg) : 'Выберите файл с расписанием'}</div>
+      <div style="height:16px"></div>
+      <p style="font-size:12.5px;color:#9a9d8f">Разработчик: ${esc(APP_AUTHOR)}<br>${esc(APP_SCHOOL)}</p>
+    </div>
+    <footer class="hint">Файл обрабатывается полностью в браузере — данные никуда не отправляются.</footer>
+  `;
+  document.getElementById('fileInput').addEventListener('change', onFileSelected);
+}
+
+function onFileSelected(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  currentFileName = file.name;
+
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    try {
+      const wb = XLSX.read(evt.target.result, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      scheduleData = parseSchedule(rows);
+      console.log('Найдено классов:', Object.keys(scheduleData.classes).length);
+      renderMain();
+    } catch (err) {
+      console.error(err);
+      renderInitial('Ошибка: ' + err.message, 'error');
+    }
+  };
+  reader.onerror = () => renderInitial('Не удалось прочитать файл', 'error');
+  reader.readAsArrayBuffer(file);
+}
+
+/* =========================================================
+   4. ОСНОВНОЙ ЭКРАН
+   ========================================================= */
+function renderMain() {
+  app.innerHTML = `
+    <div class="sticky-header">
+      <div class="topbar">
+        <label class="btn secondary" for="fileInput2">📁 Загрузить файл Excel</label>
+        <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none">
+        <div class="status ok">Загружен: ${esc(currentFileName)}</div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="teachers">👨‍🏫 Учителя</button>
+        <button class="tab-btn" data-tab="classes">👥 Классы</button>
+        <button class="tab-btn" data-tab="rooms">🚪 Кабинеты</button>
+        <button class="tab-btn" data-tab="teacherSearch">🔍 Поиск учителя</button>
+        <button class="tab-btn" data-tab="roomSearch">🔍 Поиск кабинета</button>
+      </div>
+    </div>
+    <div class="tab-panel active" id="panel-teachers"></div>
+    <div class="tab-panel" id="panel-classes"></div>
+    <div class="tab-panel" id="panel-rooms"></div>
+    <div class="tab-panel" id="panel-teacherSearch"></div>
+    <div class="tab-panel" id="panel-roomSearch"></div>
+  `;
+  document.getElementById('fileInput2').addEventListener('change', onFileSelected);
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-pill">Классы: <b>${Object.keys(scheduleData.classes).length}</b></div>
+    <div class="stat-pill">Учителя: <b>${Object.keys(scheduleData.teachers).length}</b></div>
+    <div class="stat-pill">Кабинеты: <b>${Object.keys(scheduleData.rooms).length}</b></div>
+    <div class="stat-pill">Предметы: <b>${Object.keys(scheduleData.subjects).length}</b></div>
+  `;
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  renderTeachersTab();
+  renderClassesTab();
+  renderRoomsTab();
+  renderTeacherSearchTab();
+  renderRoomSearchTab();
+}
+
+/* ---------- Вкладка «Учителя» ---------- */
+function renderTeachersTab() {
+  const panel = document.getElementById('panel-teachers');
+  const teachers = Object.keys(scheduleData.teachers).filter(t => t && t.trim()).sort();
+  if (!teachers.length) { panel.innerHTML = `<div class="empty">Нет данных об учителях</div>`; return; }
+
+  panel.innerHTML = `
+    <div class="row">
+      <select id="teacherSelect">
+        <option value="">Выберите учителя</option>
+        ${teachers.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+      </select>
+    </div>
+    <hr class="divider">
+    <div id="teacherSchedule" class="schedule-list"></div>
+  `;
+  document.getElementById('teacherSelect').addEventListener('change', (e) => {
+    const el = document.getElementById('teacherSchedule');
+    const teacher = e.target.value;
+    if (!teacher) { el.innerHTML = ''; return; }
+    const lessons = scheduleData.teachers[teacher] || [];
+    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание: ${esc(teacher)}</div>`;
+    if (!lessons.length) { html += `<div class="empty">У учителя нет уроков</div>`; }
+    else {
+      const byDay = {};
+      lessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
+      dayOrder.forEach(day => {
+        if (!byDay[day]) return;
+        const dayLessons = byDay[day].slice().sort((a,b) => (a.lesson_num||0) - (b.lesson_num||0));
+        html += `<div class="day-title">${cap(day)}:</div>`;
+        dayLessons.forEach(l => {
+          html += `<div class="lesson-line">${l.lesson_num ?? '?'} урок: ${esc(l.class||'?')} - ${esc(l.subject||'?')} (каб. ${esc(l.room||'?')})</div>`;
+        });
+        html += `<hr class="divider">`;
+      });
+    }
+    el.innerHTML = html;
+  });
+}
+
+/* ---------- Вкладка «Классы» + экспорт в PNG ---------- */
+function renderClassesTab() {
+  const panel = document.getElementById('panel-classes');
+  const classes = Object.keys(scheduleData.classes).sort();
+  if (!classes.length) { panel.innerHTML = `<div class="empty">Нет данных о классах</div>`; return; }
+
+  panel.innerHTML = `
+    <div class="row">
+      <select id="classSelect">
+        <option value="">Выберите класс</option>
+        ${classes.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+      </select>
+      <button class="btn secondary" id="exportBtn" disabled>💾 Сохранить как изображение</button>
+    </div>
+    <hr class="divider">
+    <div id="classSchedule" class="schedule-list"></div>
+  `;
+
+  const select = document.getElementById('classSelect');
+  const exportBtn = document.getElementById('exportBtn');
+
+  select.addEventListener('change', () => {
+    const el = document.getElementById('classSchedule');
+    const className = select.value;
+    exportBtn.disabled = !className;
+    if (!className) { el.innerHTML = ''; return; }
+
+    const classSchedule = scheduleData.classes[className] || {};
+    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание класса: ${esc(className)}</div>`;
+
+    dayOrder.forEach(day => {
+      const dayLessons = classSchedule[day];
+      if (!dayLessons || !Object.keys(dayLessons).length) return;
+      html += `<div class="day-title">${cap(day)}:</div>`;
+      const lessonNums = Object.keys(dayLessons).map(Number).sort((a,b) => a-b);
+      lessonNums.forEach(num => {
+        const lessons = dayLessons[num];
+        const bySubject = {};
+        lessons.forEach(l => { (bySubject[l.subject||'?'] ??= []).push(l); });
+        Object.entries(bySubject).forEach(([subject, subjLessons]) => {
+          if (subjLessons.length > 1) {
+            html += `<div class="lesson-line">${num} урок: ${esc(subject)}</div>`;
+            const parts = subjLessons.map(l => `${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})`);
+            html += `<div class="lesson-sub">${parts.join(' | ')}</div>`;
+          } else {
+            const l = subjLessons[0];
+            html += `<div class="lesson-line">${num} урок: ${esc(subject)} - ${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</div>`;
+          }
+        });
+      });
+      html += `<hr class="divider">`;
+    });
+    el.innerHTML = html;
+  });
+
+  exportBtn.addEventListener('click', () => {
+    const className = select.value;
+    if (!className) return;
+    exportBtn.disabled = true;
+    const oldText = exportBtn.textContent;
+    exportBtn.textContent = 'Сохраняем...';
+    setTimeout(() => {
+      try {
+        exportClassScheduleToImage(className, scheduleData.classes[className]);
+      } finally {
+        exportBtn.disabled = false;
+        exportBtn.textContent = oldText;
+      }
+    }, 30);
+  });
+}
+
+/* Портировано из schedule_exporter.py: PIL -> Canvas */
+function exportClassScheduleToImage(className, schedule) {
+  const dayCellWidth = 220, lessonCellWidth = 60, cellHeight = 90, headerHeight = 70, margin = 30;
+
+  let maxLessons = 0;
+  dayOrder.forEach(day => {
+    const dayLessons = schedule[day];
+    if (dayLessons) {
+      const nums = Object.keys(dayLessons).map(Number);
+      if (nums.length) maxLessons = Math.max(maxLessons, ...nums);
+    }
+  });
+  if (maxLessons === 0) maxLessons = 10;
+
+  const height = Math.max(600, Math.min(200 + maxLessons * 90, 2000));
+  const width = margin + lessonCellWidth + dayOrder.length * dayCellWidth + margin;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height);
+  ctx.textBaseline = 'top';
+
+  const fontFamily = "'Segoe UI', Tahoma, Arial, sans-serif";
+
+  // Заголовок
+  ctx.fillStyle = '#000';
+  ctx.font = `bold 26px ${fontFamily}`;
+  const title = `Расписание класса: ${className}`;
+  const titleWidth = ctx.measureText(title).width;
+  ctx.fillText(title, (width - titleWidth) / 2, margin);
+
+  // Заголовок столбца "Урок"
+  const headerY = margin + headerHeight;
+  ctx.fillStyle = '#e8f4f8';
+  ctx.fillRect(margin, headerY, lessonCellWidth, cellHeight);
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+  ctx.strokeRect(margin, headerY, lessonCellWidth, cellHeight);
+  ctx.fillStyle = '#000';
+  ctx.font = `bold 15px ${fontFamily}`;
+  ctx.fillText('Урок', margin + 10, headerY + 10);
+
+  // Заголовки дней
+  dayOrder.forEach((day, i) => {
+    const x = margin + lessonCellWidth + i * dayCellWidth;
+    ctx.fillStyle = '#e8f4f8';
+    ctx.fillRect(x, headerY, dayCellWidth, cellHeight);
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+    ctx.strokeRect(x, headerY, dayCellWidth, cellHeight);
+    ctx.fillStyle = '#000';
+    ctx.font = `bold 15px ${fontFamily}`;
+    const dayText = cap(day);
+    const tw = ctx.measureText(dayText).width;
+    ctx.fillText(dayText, x + (dayCellWidth - tw) / 2, headerY + (cellHeight - 16) / 2);
+  });
+
+  // Тело таблицы
+  for (let lessonNum = 1; lessonNum <= maxLessons; lessonNum++) {
+    const y = headerY + lessonNum * cellHeight;
+
+    ctx.fillStyle = '#f9f9f9';
+    ctx.fillRect(margin, y, lessonCellWidth, cellHeight);
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+    ctx.strokeRect(margin, y, lessonCellWidth, cellHeight);
+    ctx.fillStyle = 'darkblue';
+    ctx.font = `bold 14px ${fontFamily}`;
+    const numText = String(lessonNum);
+    const numWidth = ctx.measureText(numText).width;
+    ctx.fillText(numText, margin + (lessonCellWidth - numWidth) / 2, y + (cellHeight - 14) / 2);
+
+    dayOrder.forEach((day, i) => {
+      const x = margin + lessonCellWidth + i * dayCellWidth;
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, dayCellWidth, cellHeight);
+
+      const lessons = schedule[day] && schedule[day][lessonNum];
+      if (lessons && lessons.length) {
+        const n = lessons.length;
+        if (n > 1) {
+          for (let idx = 1; idx < n; idx++) {
+            const splitY = y + Math.floor((idx * cellHeight) / n);
+            ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(x, splitY); ctx.lineTo(x + dayCellWidth, splitY); ctx.stroke();
+          }
+          lessons.forEach((lesson, idx) => {
+            const sectionH = cellHeight / n;
+            const sy = y + idx * sectionH;
+            let subject = lesson.subject || '?';
+            let teacher = lesson.teacher || 'не указан';
+            const room = lesson.room || '?';
+            if (subject.length > 12) subject = subject.slice(0, 12) + '...';
+            if (teacher.length > 15) teacher = teacher.slice(0, 15) + '...';
+            const fontSize = n > 2 ? 10 : 12;
+            ctx.font = `${fontSize}px ${fontFamily}`;
+            ctx.fillStyle = 'darkblue'; ctx.fillText(subject, x + 3, sy + 2);
+            ctx.fillStyle = 'darkgreen'; ctx.fillText(teacher, x + 3, sy + sectionH/3);
+            if (room && room !== '?') { ctx.fillStyle = 'darkred'; ctx.fillText('к.' + room, x + 3, sy + 2*sectionH/3); }
+          });
+        } else {
+          const lesson = lessons[0];
+          let subject = lesson.subject || '?';
+          let teacher = lesson.teacher || 'не указан';
+          const room = lesson.room || '?';
+          if (subject.length > 15) subject = subject.slice(0, 15) + '...';
+          if (teacher.length > 18) teacher = teacher.slice(0, 18) + '...';
+          ctx.font = `13px ${fontFamily}`;
+          ctx.fillStyle = 'darkblue'; ctx.fillText(subject, x + 5, y + 5);
+          if (teacher !== 'не указан') { ctx.fillStyle = 'darkgreen'; ctx.fillText(teacher, x + 5, y + 25); }
+          if (room && room !== '?') { ctx.fillStyle = 'darkred'; ctx.fillText('каб. ' + room, x + 5, y + 45); }
+        }
+      } else {
+        ctx.font = `13px ${fontFamily}`;
+        ctx.fillStyle = 'gray';
+        const emptyWidth = ctx.measureText('---').width;
+        ctx.fillText('---', x + (dayCellWidth - emptyWidth) / 2, y + (cellHeight - 13) / 2);
+      }
+    });
+  }
+
+  canvas.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `расписание_${className}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
+/* ---------- Вкладка «Кабинеты» ---------- */
+function renderRoomsTab() {
+  const panel = document.getElementById('panel-rooms');
+  const rooms = Object.keys(scheduleData.rooms)
+    .filter(r => r && r.trim())
+    .sort((a, b) => a.length - b.length || a.localeCompare(b));
+  if (!rooms.length) { panel.innerHTML = `<div class="empty">Нет данных о кабинетах</div>`; return; }
+
+  panel.innerHTML = `
+    <div class="row">
+      <select id="roomSelect">
+        <option value="">Выберите кабинет</option>
+        ${rooms.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
+      </select>
+    </div>
+    <hr class="divider">
+    <div id="roomSchedule" class="schedule-list"></div>
+  `;
+
+  document.getElementById('roomSelect').addEventListener('change', (e) => {
+    const el = document.getElementById('roomSchedule');
+    const room = e.target.value;
+    if (!room) { el.innerHTML = ''; return; }
+
+    const roomLessons = scheduleData.rooms[room] || [];
+    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание кабинета: ${esc(room)}</div>`;
+
+    if (!roomLessons.length) {
+      html += `<div class="empty">В кабинете нет занятий</div>`;
+      el.innerHTML = html;
+      return;
+    }
+
+    const byDay = {};
+    roomLessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
+
+    let maxLessonNum = 0;
+    Object.values(byDay).forEach(list => list.forEach(l => { maxLessonNum = Math.max(maxLessonNum, l.lesson_num || 0); }));
+
+    dayOrder.forEach(day => {
+      const dayLessons = byDay[day] || [];
+      const byNum = {};
+      dayLessons.forEach(l => { byNum[l.lesson_num || 0] = l; });
+
+      html += `<div class="day-title">${cap(day)}:</div>`;
+      for (let num = 1; num <= maxLessonNum; num++) {
+        if (byNum[num]) {
+          const l = byNum[num];
+          html += `<div class="slot busy">${num} урок: ${esc(l.subject||'?')} - ${esc(l.teacher||'не указан')} (класс: ${esc(l.class||'?')})</div>`;
+        } else {
+          html += `<div class="slot free">${num} урок: Кабинет свободен</div>`;
+        }
+      }
+    });
+
+    const totalLessons = roomLessons.length;
+    const freeLessons = maxLessonNum > 0 ? (maxLessonNum * dayOrder.length) - totalLessons : 0;
+    html += `<div class="room-stats">Статистика: занято уроков — ${totalLessons}, свободно — ${freeLessons}</div>`;
+
+    el.innerHTML = html;
+  });
+}
+
+/* ---------- Вспомогательное: параллели и предметы из уроков учителей ---------- */
+function extractGrade(className) {
+  const m = String(className || '').match(/^(\d+)/);
+  return m ? m[1] : null;
+}
+
+/* ---------- Вкладка «Поиск учителя» ---------- */
+function renderTeacherSearchTab() {
+  const panel = document.getElementById('panel-teacherSearch');
+
+  const allSubjects = new Set();
+  const allGrades = new Set();
+  Object.values(scheduleData.teachers).forEach(lessons => {
+    lessons.forEach(l => {
+      if (l.subject && l.subject !== '?') allSubjects.add(l.subject);
+      const g = extractGrade(l.class);
+      if (g) allGrades.add(g);
+    });
+  });
+  const subjectsList = Array.from(allSubjects).sort();
+  const gradesList = Array.from(allGrades).sort((a, b) => Number(a) - Number(b));
+
+  panel.innerHTML = `
+    <div style="font-size:20px;font-weight:700">🔍 Поиск свободного учителя</div>
+    <div style="font-size:13.5px;color:#5a5f54;margin-top:2px">Выберите день и урок, чтобы найти свободных учителей</div>
+    <hr class="divider">
+    <div style="font-weight:700;font-size:14.5px;margin-bottom:8px">Основные параметры поиска:</div>
+    <div class="row">
+      <select id="tsDay"><option value="">День недели</option>${dayOrder.map(d => `<option value="${d}">${cap(d)}</option>`).join('')}</select>
+      <select id="tsLesson"><option value="">Номер урока</option>${[1,2,3,4,5,6,7,8,9,10].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
+      <button class="btn" id="tsSearchBtn">🔎 Найти</button>
+    </div>
+    <hr class="divider">
+    <div style="font-weight:700;font-size:14.5px">Дополнительная фильтрация:</div>
+    <div style="font-size:12px;color:#8a8d80;margin-bottom:8px">(не обязательно)</div>
+    <div class="row">
+      <select id="tsSubject"><option value="Все предметы">Все предметы</option>${subjectsList.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}</select>
+      <select id="tsGrade"><option value="Все параллели">Все параллели</option>${gradesList.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
+      <button class="btn secondary" id="tsClearBtn">✖ Очистить фильтры</button>
+    </div>
+    <hr class="divider">
+    <div id="tsResults" class="schedule-list"></div>
+  `;
+
+  const dayEl = document.getElementById('tsDay');
+  const lessonEl = document.getElementById('tsLesson');
+  const subjectEl = document.getElementById('tsSubject');
+  const gradeEl = document.getElementById('tsGrade');
+  const resultsEl = document.getElementById('tsResults');
+
+  function searchTeachers() {
+    if (!dayEl.value || !lessonEl.value) return;
+    const day = dayEl.value;
+    const lessonNum = Number(lessonEl.value);
+    const selectedSubject = subjectEl.value;
+    const selectedGrade = gradeEl.value;
+
+    let html = `<div class="lesson-line" style="font-weight:700">Свободные учителя в ${esc(day)} на ${lessonNum} урок:</div>`;
+
+    let allTeachers = Object.keys(scheduleData.teachers).filter(t => t && t.trim());
+    const busy = new Set();
+    Object.entries(scheduleData.teachers).forEach(([teacher, lessons]) => {
+      if (lessons.some(l => l.day === day && l.lesson_num === lessonNum)) busy.add(teacher);
+    });
+    let free = allTeachers.filter(t => !busy.has(t));
+
+    if (selectedSubject && selectedSubject !== 'Все предметы') {
+      free = free.filter(t => (scheduleData.teachers[t] || []).some(l => l.subject === selectedSubject));
+    }
+    if (selectedGrade && selectedGrade !== 'Все параллели') {
+      const re = new RegExp('^' + selectedGrade + '[а-я]?$');
+      free = free.filter(t => (scheduleData.teachers[t] || []).some(l => re.test((l.class || '').toLowerCase())));
+    }
+
+    if (!free.length) {
+      html += `<div class="empty">Нет свободных учителей, соответствующих фильтрам</div>`;
+    } else {
+      free.sort();
+      html += `<div class="lesson-line" style="color:var(--accent)">Найдено свободных учителей: ${free.length}</div>`;
+      free.forEach(teacher => {
+        const lessons = scheduleData.teachers[teacher] || [];
+        const lessonsToday = lessons.filter(l => l.day === day).length;
+        const totalLessons = lessons.length;
+        const classes = Array.from(new Set(lessons.map(l => l.class || '?'))).sort();
+        const subjects = Array.from(new Set(lessons.map(l => l.subject || '?'))).sort();
+        const grades = Array.from(new Set(lessons.map(l => extractGrade(l.class)).filter(Boolean))).sort((a,b) => Number(a)-Number(b));
+
+        html += `
+          <div class="slot busy">
+            <div style="font-weight:700">${esc(teacher)}</div>
+            <div style="font-size:12.5px">• Уроков сегодня: ${lessonsToday}</div>
+            <div style="font-size:12.5px">• Уроков за неделю: ${totalLessons}</div>
+            <div style="font-size:12.5px">• Классы: ${classes.length ? esc(classes.join(', ')) : 'нет уроков'}</div>
+            <div style="font-size:12.5px">• Параллели: ${grades.length ? esc(grades.join(', ')) : 'нет данных'}</div>
+            <div style="font-size:12.5px">• Предметы: ${subjects.length ? esc(subjects.join(', ')) : 'нет предметов'}</div>
+          </div>`;
+      });
+    }
+    resultsEl.innerHTML = html;
+  }
+
+  document.getElementById('tsSearchBtn').addEventListener('click', searchTeachers);
+  document.getElementById('tsClearBtn').addEventListener('click', () => {
+    subjectEl.value = 'Все предметы';
+    gradeEl.value = 'Все параллели';
+    searchTeachers();
+  });
+  [dayEl, lessonEl, subjectEl, gradeEl].forEach(el => el.addEventListener('change', searchTeachers));
+}
+
+/* ---------- Вкладка «Поиск кабинета» ---------- */
+function renderRoomSearchTab() {
+  const panel = document.getElementById('panel-roomSearch');
+
+  panel.innerHTML = `
+    <div style="font-size:20px;font-weight:700">🔍 Поиск свободного кабинета</div>
+    <div style="font-size:13.5px;color:#5a5f54;margin-top:2px">Выберите день и урок, чтобы найти свободные кабинеты</div>
+    <hr class="divider">
+    <div class="row">
+      <select id="rsDay"><option value="">День недели</option>${dayOrder.map(d => `<option value="${d}">${cap(d)}</option>`).join('')}</select>
+      <select id="rsLesson"><option value="">Номер урока</option>${[1,2,3,4,5,6,7,8,9,10].map(n => `<option value="${n}">${n}</option>`).join('')}</select>
+      <button class="btn" id="rsSearchBtn">🔎 Найти</button>
+    </div>
+    <hr class="divider">
+    <div id="rsResults" class="schedule-list"></div>
+  `;
+
+  const dayEl = document.getElementById('rsDay');
+  const lessonEl = document.getElementById('rsLesson');
+  const resultsEl = document.getElementById('rsResults');
+
+  function searchRooms() {
+    if (!dayEl.value || !lessonEl.value) return;
+    const day = dayEl.value;
+    const lessonNum = Number(lessonEl.value);
+
+    let html = `<div class="lesson-line" style="font-weight:700">Свободные кабинеты в ${esc(day)} на ${lessonNum} урок:</div>`;
+
+    let allRooms = Object.keys(scheduleData.rooms).filter(r => r && r.trim());
+    const busy = new Set();
+    Object.entries(scheduleData.rooms).forEach(([room, lessons]) => {
+      if (lessons.some(l => l.day === day && l.lesson_num === lessonNum)) busy.add(room);
+    });
+    let free = allRooms.filter(r => !busy.has(r));
+
+    if (!free.length) {
+      html += `<div class="empty">Нет свободных кабинетов в указанное время</div>`;
+    } else {
+      free.sort((a, b) => a.length - b.length || a.localeCompare(b));
+      html += `<div class="lesson-line" style="color:var(--accent)">Найдено свободных кабинетов: ${free.length}</div>`;
+      free.forEach(room => {
+        const lessons = scheduleData.rooms[room] || [];
+        const classes = Array.from(new Set(lessons.map(l => l.class || '?'))).sort();
+        const subjects = Array.from(new Set(lessons.map(l => l.subject || '?'))).sort();
+        const teachers = Array.from(new Set(lessons.map(l => l.teacher).filter(t => t && t !== 'не указан' && t !== '?'))).sort();
+
+        html += `
+          <div class="slot busy">
+            <div style="font-weight:700">Кабинет ${esc(room)}</div>
+            <div style="font-size:12.5px">• Классы: ${classes.length ? esc(classes.join(', ')) : 'не используется'}</div>
+            <div style="font-size:12.5px">• Предметы: ${subjects.length ? esc(subjects.join(', ')) : 'нет предметов'}</div>
+            <div style="font-size:12.5px">• Учителя: ${teachers.length ? esc(teachers.join(', ')) : 'учителя не указаны'}</div>
+          </div>`;
+      });
+    }
+    resultsEl.innerHTML = html;
+  }
+
+  document.getElementById('rsSearchBtn').addEventListener('click', searchRooms);
+  [dayEl, lessonEl].forEach(el => el.addEventListener('change', searchRooms));
+}
+
+/* =========================================================
+   5. СТАРТ
+   ========================================================= */
+renderInitial();
+
+/* Регистрация service worker'а — даёт офлайн-работу и возможность
+   установить приложение на Android («Добавить на главный экран»).
+   Работает только при открытии по https:// или localhost — если файл
+   открыт напрямую (file://), эта часть просто ничего не делает и не
+   мешает обычной работе приложения в браузере на компьютере. */
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => {
+      console.warn('Не удалось зарегистрировать service worker:', err);
+    });
+  });
+}
+</script>
+</body>
+</html>
