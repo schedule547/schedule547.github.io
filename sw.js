@@ -1,12 +1,11 @@
 // Service worker «Расписание547».
 // При каждом обновлении файла увеличивайте номер версии ниже —
-// иначе у пользователей, уже установивших приложение, останется старая версия.
-const CACHE_VERSION = 'v3';
+// это заставляет браузер удалить старый кэш и подтянуть свежие файлы.
+const CACHE_VERSION = 'v1.3.3';
 const CACHE_NAME = 'raspisanie547-' + CACHE_VERSION;
 
-// Всё, что нужно приложению для работы офлайн: сама страница, манифест,
-// иконки и библиотека SheetJS (её отдельно кэшируем по прямой ссылке на CDN,
-// т.к. без неё чтение Excel-файлов не работает).
+// Всё, что нужно приложению для работы офлайн: сама страница (как запасной
+// вариант на случай отсутствия сети), манифест, иконки и библиотека SheetJS.
 const APP_SHELL = [
   './',
   './index.html',
@@ -34,11 +33,28 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Стратегия «сначала кэш, потом сеть»: приложение открывается мгновенно
-// и работает без интернета; если ресурса вдруг нет в кэше — пробуем сеть,
-// а при удаче заодно сохраняем ответ на будущее.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
+  // Саму страницу (открытие приложения / обновление вкладки) — сначала сеть.
+  // Так правки в парсере доходят до пользователей сразу же, как только у них
+  // есть интернет; кэш подключается только если сети нет вообще.
+  const isPageRequest = event.request.mode === 'navigate' || event.request.url.endsWith('/index.html');
+  if (isPageRequest) {
+    event.respondWith(
+      fetch(new Request(event.request, { cache: 'no-store' }))
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Всё остальное (библиотека SheetJS, иконки, манифест) меняется редко —
+  // для них по-прежнему быстрее и надёжнее «сначала кэш, потом сеть».
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
