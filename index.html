@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v3</title>
+<title>Расписание547 v1.3.3</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -589,7 +589,7 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-const APP_VERSION = '3';
+const APP_VERSION = '1.3.3';
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
@@ -1319,7 +1319,25 @@ function renderRoomSearchTab() {
    мешает обычной работе приложения в браузере на компьютере. */
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch((err) => {
+    // Если на странице уже ЕСТЬ активный service worker — значит, это не
+    // самая первая установка, а повторный визит. В этом случае, если
+    // браузер найдёт и активирует более новую версию service worker'а,
+    // страницу нужно перезагрузить один раз, чтобы новый код вступил в
+    // силу сразу — иначе открытая вкладка молча продолжит работать
+    // по старому коду до ручного закрытия и повторного открытия.
+    const hadControllerBefore = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').then((registration) => {
+      if (hadControllerBefore) {
+        let reloaded = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (reloaded) return;
+          reloaded = true;
+          window.location.reload();
+        });
+      }
+      // на всякий случай явно просим браузер проверить, нет ли новой версии
+      registration.update().catch(() => {});
+    }).catch((err) => {
       console.warn('Не удалось зарегистрировать service worker:', err);
     });
   });
