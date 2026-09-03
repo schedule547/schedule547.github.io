@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.3</title>
+<title>Расписание547 v1.3.3</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -589,11 +589,73 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.3.3';
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+/* =========================================================
+   3а. ПАМЯТЬ О ПОСЛЕДНЕМ ФАЙЛЕ (IndexedDB)
+   ========================================================= */
+/* Расписание меняется редко, поэтому имеет смысл запоминать последний
+   загруженный Excel-файл целиком (сами байты, а не разобранные данные) —
+   при следующем запуске файл просто заново проходит через тот же парсер.
+   Хранится через IndexedDB (а не localStorage), т.к. файл — это бинарные
+   данные, и localStorage для такого не предназначен и заметно меньше по
+   лимиту. Если IndexedDB недоступен (приватный режим, старый браузер) —
+   приложение просто ведёт себя как раньше, без запоминания. */
+const LAST_FILE_DB = 'raspisanie547-db';
+const LAST_FILE_STORE = 'files';
+const LAST_FILE_KEY = 'lastFile';
+
+function openLastFileDB() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) { reject(new Error('IndexedDB недоступен в этом браузере')); return; }
+    const req = indexedDB.open(LAST_FILE_DB, 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore(LAST_FILE_STORE); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveLastFile(fileName, arrayBuffer) {
+  try {
+    const db = await openLastFileDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(LAST_FILE_STORE, 'readwrite');
+      tx.objectStore(LAST_FILE_STORE).put({ fileName, buffer: arrayBuffer, savedAt: Date.now() }, LAST_FILE_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('Не удалось сохранить файл для следующего запуска:', err);
+  }
+}
+async function loadLastFile() {
+  try {
+    const db = await openLastFileDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(LAST_FILE_STORE, 'readonly');
+      const req = tx.objectStore(LAST_FILE_STORE).get(LAST_FILE_KEY);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('Не удалось прочитать сохранённый файл:', err);
+    return null;
+  }
+}
+async function clearLastFile() {
+  try {
+    const db = await openLastFileDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(LAST_FILE_STORE, 'readwrite');
+      tx.objectStore(LAST_FILE_STORE).delete(LAST_FILE_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) { /* тихо игнорируем — нечего чистить или хранилище недоступно */ }
+}
 
 /* =========================================================
    3. НАЧАЛЬНЫЙ ЭКРАН
@@ -617,20 +679,88 @@ function renderInitial(statusMsg, statusType) {
   document.getElementById('fileInput').addEventListener('change', onFileSelected);
 }
 
+/* Экран показывается вместо обычного стартового, если с прошлого раза
+   остался сохранённый файл — даёт выбор: продолжить с ним или загрузить новый. */
+function renderInitialWithSavedFile(saved) {
+  const dateStr = new Date(saved.savedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  app.innerHTML = `
+    <div class="hero">
+      <div class="ledger">📚</div>
+      <h1>${APP_NAME}</h1>
+      <p style="margin-bottom:2px">Версия ${APP_VERSION}</p>
+      <p>Продолжить с последним открытым файлом?</p>
+      <div style="height:8px"></div>
+      <div class="status ok" style="margin-bottom:14px">
+        📄 ${esc(saved.fileName)}<br>
+        <span style="font-size:12px;color:#9a9d8f">загружен ${esc(dateStr)}</span>
+      </div>
+      <button class="btn" type="button" id="useLastFileBtn">✅ Продолжить с этим файлом</button>
+      <div style="height:10px"></div>
+      <label class="btn secondary" for="fileInput">📁 Выбрать другой файл</label>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
+      <div style="height:10px"></div>
+      <a href="#" id="forgetLastFileBtn" style="font-size:12.5px;color:#9a9d8f">Забыть сохранённый файл</a>
+      <div class="status" id="initStatus" style="margin-top:10px"></div>
+      <div style="height:16px"></div>
+      <p style="font-size:12.5px;color:#9a9d8f">Разработчик: ${esc(APP_AUTHOR)}<br>${esc(APP_SCHOOL)}</p>
+    </div>
+    <footer class="hint">Файл обрабатывается полностью в браузере — данные никуда не отправляются.</footer>
+  `;
+  document.getElementById('fileInput').addEventListener('change', onFileSelected);
+  document.getElementById('useLastFileBtn').addEventListener('click', () => {
+    try {
+      loadScheduleFromArrayBuffer(saved.buffer, saved.fileName);
+    } catch (err) {
+      console.error(err);
+      clearLastFile();
+      renderInitial('Не удалось открыть сохранённый файл (' + err.message + '). Выберите файл заново.', 'error');
+    }
+  });
+  document.getElementById('forgetLastFileBtn').addEventListener('click', (ev) => {
+    ev.preventDefault();
+    clearLastFile();
+    renderInitial();
+  });
+}
+
+/* Общая логика разбора книги — используется и при выборе нового файла,
+   и при повторном открытии сохранённого (без повторного чтения с диска). */
+function loadScheduleFromArrayBuffer(arrayBuffer, fileName) {
+  // Отключаем разбор того, что приложению не нужно (формулы, оформление,
+  // rich-text, VBA-макросы, метаданные книги) — на слабых Android-устройствах
+  // с маленьким лимитом памяти WebView это заметно снижает пиковое
+  // потребление памяти при чтении файла.
+  const wb = XLSX.read(arrayBuffer, {
+    type: 'array',
+    dense: true,        // компактное хранение ячеек вместо объекта со множеством ключей
+    cellFormula: false,
+    cellHTML: false,
+    cellStyles: false,
+    cellNF: false,
+    cellText: false,
+    sheetStubs: false,
+    bookVBA: false,
+    bookFiles: false,
+    bookProps: false,
+    bookDeps: false
+  });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
+  scheduleData = parseSchedule(rows);
+  currentFileName = fileName;
+  console.log('Найдено классов:', Object.keys(scheduleData.classes).length);
+  renderMain();
+}
+
 function onFileSelected(e) {
   const file = e.target.files[0];
   if (!file) return;
-  currentFileName = file.name;
 
   const reader = new FileReader();
   reader.onload = (evt) => {
     try {
-      const wb = XLSX.read(evt.target.result, { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-      scheduleData = parseSchedule(rows);
-      console.log('Найдено классов:', Object.keys(scheduleData.classes).length);
-      renderMain();
+      loadScheduleFromArrayBuffer(evt.target.result, file.name);
+      saveLastFile(file.name, evt.target.result); // фоново запоминаем для следующего запуска
     } catch (err) {
       console.error(err);
       renderInitial('Ошибка: ' + err.message, 'error');
@@ -1172,7 +1302,15 @@ function renderRoomSearchTab() {
 /* =========================================================
    5. СТАРТ
    ========================================================= */
-renderInitial();
+(async function bootApp() {
+  let saved = null;
+  try { saved = await loadLastFile(); } catch (err) { /* без сохранённого файла — обычный запуск */ }
+  if (saved && saved.buffer) {
+    renderInitialWithSavedFile(saved);
+  } else {
+    renderInitial();
+  }
+})();
 
 /* Регистрация service worker'а — даёт офлайн-работу и возможность
    установить приложение на Android («Добавить на главный экран»).
