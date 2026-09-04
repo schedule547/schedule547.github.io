@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.3.3</title>
+<title>Расписание547 v1.4.2</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -191,6 +191,12 @@
   }
   .slot.busy{background:var(--busy-bg);border:1px solid var(--busy-line);}
   .slot.free{background:var(--free-bg);color:var(--free-text);}
+  .slot-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .slot-main{flex:1 1 auto;min-width:0;}
+  .slot-time{flex:0 0 auto;font-size:12.5px;color:#7a7d70;white-space:nowrap;padding-top:1px;}
+  .slot.free .slot-time{opacity:.8;}
+  .slot .lesson-line{padding:3px 0 0;}
+  .slot .lesson-sub{padding:0 0 0 14px;}
 
   .room-stats{
     margin-top:10px;font-size:13px;font-weight:600;color:#4a4f43;
@@ -589,11 +595,35 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-const APP_VERSION = '1.3.3';
+let APP_VERSION = '1.4.2'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
+const LESSON_TIMES = {
+  1: '08:30-09:10', 2: '09:20-10:00', 3: '10:20-11:00', 4: '11:20-12:00', 5: '12:10-12:50',
+  6: '13:10-13:50', 7: '14:10-14:50', 8: '15:10-15:50', 9: '16:10-16:50', 10: '17:10-17:50'
+};
+const timeText = num => LESSON_TIMES[num] || '';
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+/* Номер версии приложения теперь хранится в одном месте — в CACHE_VERSION
+   внутри sw.js. Здесь мы просто читаем этот файл как обычный текст и
+   вытаскиваем значение регулярным выражением — благодаря этому не нужно
+   отдельно помнить о правке номера версии в самом index.html при каждом
+   обновлении: достаточно поменять его один раз в sw.js. Если sw.js
+   недоступен (например, файл открыт напрямую с диска, не через сайт) —
+   остаётся запасное значение APP_VERSION, заданное выше. */
+async function syncAppVersionFromServiceWorker() {
+  try {
+    const res = await fetch('sw.js', { cache: 'no-store' });
+    const text = await res.text();
+    const m = text.match(/const\s+CACHE_VERSION\s*=\s*['"]([^'"]+)['"]/);
+    if (m) APP_VERSION = m[1];
+  } catch (err) {
+    // офлайн или файл открыт не через сайт — остаёмся на запасном значении
+  }
+  document.title = `${APP_NAME} v${APP_VERSION}`;
+}
 
 /* =========================================================
    3а. ПАМЯТЬ О ПОСЛЕДНЕМ ФАЙЛЕ (IndexedDB)
@@ -848,13 +878,19 @@ function renderTeachersTab() {
       const byDay = {};
       lessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
       dayOrder.forEach(day => {
-        if (!byDay[day]) return;
-        const dayLessons = byDay[day].slice().sort((a,b) => (a.lesson_num||0) - (b.lesson_num||0));
+        if (!byDay[day] || !byDay[day].length) return;
+        const byNum = {};
+        byDay[day].forEach(l => { byNum[l.lesson_num || 0] = l; });
+        const dayMax = Math.max(...byDay[day].map(l => l.lesson_num || 0));
         html += `<div class="day-title">${cap(day)}:</div>`;
-        dayLessons.forEach(l => {
-          html += `<div class="lesson-line">${l.lesson_num ?? '?'} урок: ${esc(l.class||'?')} - ${esc(l.subject||'?')} (каб. ${esc(l.room||'?')})</div>`;
-        });
-        html += `<hr class="divider">`;
+        for (let num = 1; num <= dayMax; num++) {
+          const l = byNum[num];
+          if (l) {
+            html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.class||'?')} - ${esc(l.subject||'?')} (каб. ${esc(l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          } else {
+            html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          }
+        }
       });
     }
     el.innerHTML = html;
@@ -895,23 +931,37 @@ function renderClassesTab() {
       const dayLessons = classSchedule[day];
       if (!dayLessons || !Object.keys(dayLessons).length) return;
       html += `<div class="day-title">${cap(day)}:</div>`;
-      const lessonNums = Object.keys(dayLessons).map(Number).sort((a,b) => a-b);
-      lessonNums.forEach(num => {
+      const dayMax = Math.max(...Object.keys(dayLessons).map(Number));
+      for (let num = 1; num <= dayMax; num++) {
         const lessons = dayLessons[num];
+        if (!lessons || !lessons.length) {
+          html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          continue;
+        }
         const bySubject = {};
         lessons.forEach(l => { (bySubject[l.subject||'?'] ??= []).push(l); });
-        Object.entries(bySubject).forEach(([subject, subjLessons]) => {
-          if (subjLessons.length > 1) {
-            html += `<div class="lesson-line">${num} урок: ${esc(subject)}</div>`;
-            const parts = subjLessons.map(l => `${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})`);
-            html += `<div class="lesson-sub">${parts.join(' | ')}</div>`;
-          } else {
-            const l = subjLessons[0];
-            html += `<div class="lesson-line">${num} урок: ${esc(subject)} - ${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</div>`;
-          }
-        });
-      });
-      html += `<hr class="divider">`;
+        const subjectEntries = Object.entries(bySubject);
+        if (subjectEntries.length === 1 && subjectEntries[0][1].length === 1) {
+          const l = subjectEntries[0][1][0];
+          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+        } else {
+          // Поток делится на несколько групп — все группы рисуются ВНУТРИ
+          // одного цветного блока урока, а не рядом с ним (раньше уходили
+          // за его границы и выглядели оторванными от заголовка урока).
+          let groupsHtml = '';
+          subjectEntries.forEach(([subject, subjLessons]) => {
+            if (subjLessons.length > 1) {
+              groupsHtml += `<div class="lesson-line">${esc(subject)}</div>`;
+              const parts = subjLessons.map(l => `${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})`);
+              groupsHtml += `<div class="lesson-sub">${parts.join(' | ')}</div>`;
+            } else {
+              const l = subjLessons[0];
+              groupsHtml += `<div class="lesson-line">${esc(subject)} - ${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</div>`;
+            }
+          });
+          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок:</span><span class="slot-time">${esc(timeText(num))}</span></div>${groupsHtml}</div>`;
+        }
+      }
     });
     el.innerHTML = html;
   });
@@ -1112,9 +1162,9 @@ function renderRoomsTab() {
       for (let num = 1; num <= maxLessonNum; num++) {
         if (byNum[num]) {
           const l = byNum[num];
-          html += `<div class="slot busy">${num} урок: ${esc(l.subject||'?')} - ${esc(l.teacher||'не указан')} (класс: ${esc(l.class||'?')})</div>`;
+          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${esc(l.teacher||'не указан')} (класс: ${esc(l.class||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         } else {
-          html += `<div class="slot free">${num} урок: Кабинет свободен</div>`;
+          html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         }
       }
     });
@@ -1303,6 +1353,7 @@ function renderRoomSearchTab() {
    5. СТАРТ
    ========================================================= */
 (async function bootApp() {
+  await syncAppVersionFromServiceWorker();
   let saved = null;
   try { saved = await loadLastFile(); } catch (err) { /* без сохранённого файла — обычный запуск */ }
   if (saved && saved.buffer) {
