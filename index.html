@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.4.3</title>
+<title>Расписание547 v1.5.0</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -201,6 +201,25 @@
   .room-stats{
     margin-top:10px;font-size:13px;font-weight:600;color:#4a4f43;
   }
+
+  .favorites-strip{
+    display:flex;gap:6px;overflow-x:auto;padding:6px 2px;margin:2px 0 4px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .fav-chip{
+    display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
+    background:var(--accent-soft);border:1px solid var(--line);border-radius:14px;
+    padding:5px 9px;font-size:12.5px;white-space:nowrap;cursor:pointer;color:var(--ink);
+  }
+  .fav-chip:hover{border-color:var(--accent);}
+  .fav-remove{opacity:.55;font-size:11px;padding:0 1px;}
+  .fav-remove:hover{opacity:1;color:var(--danger);}
+
+  .xlink{color:var(--accent);cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;}
+  .xlink:hover{text-decoration-style:solid;}
+
+  .fav-toggle{cursor:pointer;font-size:17px;margin-left:8px;user-select:none;vertical-align:middle;color:var(--gold);}
+  .fav-toggle:hover{opacity:.75;}
 
   footer.hint{
     margin-top:40px;font-size:12.5px;color:#9a9d8f;text-align:center;
@@ -595,7 +614,7 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.4.3'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.5.0'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES = {
@@ -605,6 +624,16 @@ const LESSON_TIMES = {
 const timeText = num => LESSON_TIMES[num] || '';
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+/* Оборачивает имя учителя/класса/кабинета в кликабельную ссылку — клик по
+   ней переключает на соответствующую вкладку и сразу открывает расписание
+   этого элемента (см. goTo() и делегированный обработчик кликов ниже).
+   Служебные значения вроде «не указан» или «?» ссылками не делаем. */
+function xlink(type, name, label) {
+  const text = label !== undefined ? label : name;
+  if (!name || name === '?' || name === 'не указан') return esc(text);
+  return `<span class="xlink" data-type="${esc(type)}" data-name="${esc(name)}">${esc(text)}</span>`;
+}
 
 /* Номер версии приложения теперь хранится в одном месте — в CACHE_VERSION
    внутри sw.js. Здесь мы просто читаем этот файл как обычный текст и
@@ -624,6 +653,100 @@ async function syncAppVersionFromServiceWorker() {
   }
   document.title = `${APP_NAME} v${APP_VERSION}`;
 }
+
+/* =========================================================
+   3а0. ИЗБРАННОЕ + БЫСТРЫЕ ПЕРЕХОДЫ МЕЖДУ ВКЛАДКАМИ
+   ========================================================= */
+/* Избранное — это просто список {type, name} (учитель/класс/кабинет),
+   хранится в localStorage: данные крошечные (строки), в отличие от самого
+   Excel-файла, для которого используется IndexedDB. Хранилище отдельное
+   и не зависит от версии кэша (CACHE_VERSION) — переживает любые
+   обновления приложения. */
+const FAVORITES_KEY = 'raspisanie547-favorites';
+const FAV_ICON = { teacher: '👨\u200d🏫', class: '👥', room: '🚪' };
+const FAV_TAB = { teacher: 'teachers', class: 'classes', room: 'rooms' };
+const FAV_SELECT_ID = { teacher: 'teacherSelect', class: 'classSelect', room: 'roomSelect' };
+
+function getFavorites() {
+  try { return JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'); }
+  catch (err) { return []; }
+}
+function isFavorite(type, name) {
+  return getFavorites().some(f => f.type === type && f.name === name);
+}
+function setFavorite(type, name, value) {
+  const list = getFavorites().filter(f => !(f.type === type && f.name === name));
+  if (value) list.push({ type, name });
+  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(list)); }
+  catch (err) { console.warn('Не удалось сохранить избранное:', err); }
+}
+
+/* Лента избранного — всегда над вкладками (см. renderMain). */
+function renderFavoritesStrip() {
+  const el = document.getElementById('favoritesStrip');
+  if (!el) return;
+  const favs = getFavorites();
+  if (!favs.length) { el.innerHTML = ''; return; }
+  el.innerHTML = favs.map(f => `
+    <span class="fav-chip" data-type="${esc(f.type)}" data-name="${esc(f.name)}">
+      ${FAV_ICON[f.type] || ''} ${esc(f.name)}
+      <span class="fav-remove" data-type="${esc(f.type)}" data-name="${esc(f.name)}" title="Убрать из избранного">✕</span>
+    </span>
+  `).join('');
+}
+
+/* Переключает активную вкладку (та же логика, что и клик по кнопке вкладки —
+   вынесена в отдельную функцию, чтобы вызывать её и программно). */
+function activateTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tabId));
+}
+
+/* Переход к расписанию конкретного учителя/класса/кабинета — используется
+   и кликом по ссылке внутри расписания, и кликом по чипу избранного. */
+function goTo(type, name) {
+  const tabId = FAV_TAB[type];
+  const selectId = FAV_SELECT_ID[type];
+  if (!tabId || !selectId) return;
+  activateTab(tabId);
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const hasOption = Array.from(select.options).some(o => o.value === name);
+  if (!hasOption) {
+    // такого учителя/класса/кабинета нет в текущем файле (например, избранное
+    // осталось от расписания за прошлый период) — просто открываем вкладку
+    return;
+  }
+  select.value = name;
+  select.dispatchEvent(new Event('change'));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* Один делегированный обработчик на всё приложение — работает даже после
+   пересборки innerHTML вкладок (что происходит постоянно), т.к. навешан
+   на неизменный корневой контейнер, а не на конкретные элементы списков. */
+app.addEventListener('click', (e) => {
+  const link = e.target.closest('.xlink');
+  if (link) { goTo(link.dataset.type, link.dataset.name); return; }
+
+  const remove = e.target.closest('.fav-remove');
+  if (remove) {
+    setFavorite(remove.dataset.type, remove.dataset.name, false);
+    renderFavoritesStrip();
+    return;
+  }
+  const chip = e.target.closest('.fav-chip');
+  if (chip) { goTo(chip.dataset.type, chip.dataset.name); return; }
+
+  const star = e.target.closest('.fav-toggle');
+  if (star) {
+    const nowFav = !isFavorite(star.dataset.type, star.dataset.name);
+    setFavorite(star.dataset.type, star.dataset.name, nowFav);
+    star.textContent = nowFav ? '★' : '☆';
+    renderFavoritesStrip();
+    return;
+  }
+});
 
 /* =========================================================
    3а. ПАМЯТЬ О ПОСЛЕДНЕМ ФАЙЛЕ (IndexedDB)
@@ -812,6 +935,7 @@ function renderMain() {
         <div class="status ok">Загружен: ${esc(currentFileName)}</div>
       </div>
       <div class="stats" id="stats"></div>
+      <div class="favorites-strip" id="favoritesStrip"></div>
       <div class="tabs">
         <button class="tab-btn active" data-tab="teachers">👨‍🏫 Учителя</button>
         <button class="tab-btn" data-tab="classes">👥 Классы</button>
@@ -836,14 +960,10 @@ function renderMain() {
   `;
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
-    });
+    btn.addEventListener('click', () => activateTab(btn.dataset.tab));
   });
 
+  renderFavoritesStrip();
   renderTeachersTab();
   renderClassesTab();
   renderRoomsTab();
@@ -872,7 +992,8 @@ function renderTeachersTab() {
     const teacher = e.target.value;
     if (!teacher) { el.innerHTML = ''; return; }
     const lessons = scheduleData.teachers[teacher] || [];
-    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание: ${esc(teacher)}</div>`;
+    const starIcon = isFavorite('teacher', teacher) ? '★' : '☆';
+    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание: ${esc(teacher)}<span class="fav-toggle" data-type="teacher" data-name="${esc(teacher)}" title="Добавить/убрать из избранного">${starIcon}</span></div>`;
     if (!lessons.length) { html += `<div class="empty">У учителя нет уроков</div>`; }
     else {
       const byDay = {};
@@ -886,7 +1007,7 @@ function renderTeachersTab() {
         for (let num = 1; num <= dayMax; num++) {
           const l = byNum[num];
           if (l) {
-            html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.class||'?')} - ${esc(l.subject||'?')} (каб. ${esc(l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+            html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${xlink('class', l.class, l.class||'?')} - ${esc(l.subject||'?')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
           } else {
             html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
           }
@@ -925,7 +1046,8 @@ function renderClassesTab() {
     if (!className) { el.innerHTML = ''; return; }
 
     const classSchedule = scheduleData.classes[className] || {};
-    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание класса: ${esc(className)}</div>`;
+    const starIcon = isFavorite('class', className) ? '★' : '☆';
+    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание класса: ${esc(className)}<span class="fav-toggle" data-type="class" data-name="${esc(className)}" title="Добавить/убрать из избранного">${starIcon}</span></div>`;
 
     dayOrder.forEach(day => {
       const dayLessons = classSchedule[day];
@@ -943,7 +1065,7 @@ function renderClassesTab() {
         const subjectEntries = Object.entries(bySubject);
         if (subjectEntries.length === 1 && subjectEntries[0][1].length === 1) {
           const l = subjectEntries[0][1][0];
-          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         } else {
           // Поток делится на несколько групп — все группы рисуются ВНУТРИ
           // одного цветного блока урока, а не рядом с ним (раньше уходили
@@ -960,12 +1082,12 @@ function renderClassesTab() {
           let groupsHtml = '';
           subjectEntries.forEach(([subject, subjLessons]) => {
             if (subjLessons.length > 1) {
-              const parts = subjLessons.map(l => `${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})`);
+              const parts = subjLessons.map(l => `${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})`);
               groupsHtml += `<div class="lesson-sub">${parts.join(' | ')}</div>`;
             } else {
               const l = subjLessons[0];
               const prefix = sameSubjectForAll ? '' : `${esc(subject)} - `;
-              groupsHtml += `<div class="lesson-sub">${prefix}${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</div>`;
+              groupsHtml += `<div class="lesson-sub">${prefix}${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</div>`;
             }
           });
           html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(headerText)}</span><span class="slot-time">${esc(timeText(num))}</span></div>${groupsHtml}</div>`;
@@ -1148,7 +1270,8 @@ function renderRoomsTab() {
     if (!room) { el.innerHTML = ''; return; }
 
     const roomLessons = scheduleData.rooms[room] || [];
-    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание кабинета: ${esc(room)}</div>`;
+    const starIcon = isFavorite('room', room) ? '★' : '☆';
+    let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание кабинета: ${esc(room)}<span class="fav-toggle" data-type="room" data-name="${esc(room)}" title="Добавить/убрать из избранного">${starIcon}</span></div>`;
 
     if (!roomLessons.length) {
       html += `<div class="empty">В кабинете нет занятий</div>`;
@@ -1171,7 +1294,7 @@ function renderRoomsTab() {
       for (let num = 1; num <= maxLessonNum; num++) {
         if (byNum[num]) {
           const l = byNum[num];
-          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${esc(l.teacher||'не указан')} (класс: ${esc(l.class||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         } else {
           html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         }
