@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.5.0</title>
+<title>Расписание547 v1.5.1</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -39,6 +39,24 @@
     --busy-bg:#e2efe4;
     --busy-line:#a9c9b4;
     --danger:#b23b3b;
+    --muted:#6b6f63;
+  }
+  /* Тёмная тема — та же система переменных с другими значениями,
+     переключается добавлением класса theme-dark на <body> (см. JS). */
+  body.theme-dark{
+    --ink:#e8e6df;
+    --paper:#181b17;
+    --panel:#232720;
+    --line:#3a3f37;
+    --accent:#3f8069;
+    --accent-soft:#22322a;
+    --gold:#d9b15c;
+    --free-bg:#23261f;
+    --free-text:#9a9d90;
+    --busy-bg:#1f3128;
+    --busy-line:#3d5c49;
+    --danger:#e0685f;
+    --muted:#9a9d90;
   }
   *{box-sizing:border-box;}
   body{
@@ -66,7 +84,7 @@
     margin:0 0 4px;
     letter-spacing:.2px;
   }
-  .hero p{margin:0;color:#5a5f54;font-size:15px;}
+  .hero p{margin:0;color:var(--muted);font-size:15px;}
   .ledger{
     width:64px;height:64px;border-radius:14px;
     background:var(--accent);
@@ -96,7 +114,7 @@
   .btn:active{transform:translateY(1px);}
   .btn:disabled{opacity:.45;cursor:not-allowed;}
   .btn.secondary{
-    background:#fff;color:var(--accent);
+    background:var(--panel);color:var(--accent);
   }
   .btn.secondary:hover{background:var(--accent-soft);}
 
@@ -105,7 +123,7 @@
     padding:9px 12px;
     border-radius:8px;
     border:1px solid var(--line);
-    background:#fff;
+    background:var(--panel);
     color:var(--ink);
   }
   select{min-width:220px;}
@@ -125,7 +143,7 @@
     padding-bottom:14px;
     border-bottom:1px solid var(--line);
   }
-  .status{font-size:13.5px;color:#5a5f54;}
+  .status{font-size:13.5px;color:var(--muted);}
   .status.error{color:var(--danger);}
   .status.ok{color:var(--accent);}
 
@@ -141,7 +159,7 @@
     border-radius:999px;
     padding:5px 14px;
     font-size:13px;
-    color:#4a4f43;
+    color:var(--muted);
   }
   .stat-pill b{color:var(--ink);}
 
@@ -158,7 +176,7 @@
     border:none;
     padding:10px 16px;
     font-size:14.5px;
-    color:#6b6f63;
+    color:var(--muted);
     cursor:pointer;
     border-bottom:2px solid transparent;
     margin-bottom:-1px;
@@ -172,7 +190,7 @@
   .tab-panel.active{display:block;}
 
   .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
-  .empty{color:#8a8d80;padding:24px 4px;font-size:14.5px;}
+  .empty{color:var(--muted);padding:24px 4px;font-size:14.5px;}
 
   .schedule-list{margin-top:16px;}
   .day-title{
@@ -180,7 +198,7 @@
     margin:16px 0 6px;
   }
   .lesson-line{padding:3px 0;font-size:14.5px;}
-  .lesson-sub{padding:0 0 3px 14px;font-size:13px;color:#4a4f43;}
+  .lesson-sub{padding:0 0 3px 14px;font-size:13px;color:var(--muted);}
   .divider{border:none;border-top:1px solid var(--line);margin:8px 0;}
 
   .slot{
@@ -193,13 +211,13 @@
   .slot.free{background:var(--free-bg);color:var(--free-text);}
   .slot-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
   .slot-main{flex:1 1 auto;min-width:0;}
-  .slot-time{flex:0 0 auto;font-size:12.5px;color:#7a7d70;white-space:nowrap;padding-top:1px;}
+  .slot-time{flex:0 0 auto;font-size:12.5px;color:var(--muted);white-space:nowrap;padding-top:1px;}
   .slot.free .slot-time{opacity:.8;}
   .slot .lesson-line{padding:3px 0 0;}
   .slot .lesson-sub{padding:0 0 0 14px;}
 
   .room-stats{
-    margin-top:10px;font-size:13px;font-weight:600;color:#4a4f43;
+    margin-top:10px;font-size:13px;font-weight:600;color:var(--muted);
   }
 
   .favorites-strip{
@@ -222,7 +240,7 @@
   .fav-toggle:hover{opacity:.75;}
 
   footer.hint{
-    margin-top:40px;font-size:12.5px;color:#9a9d8f;text-align:center;
+    margin-top:40px;font-size:12.5px;color:var(--muted);text-align:center;
   }
 </style>
 </head>
@@ -368,14 +386,27 @@ function isTeacherName(text) {
 }
 function extractLessonsFromBlock(lessonRows, subjectCol, roomCol) {
   if (!lessonRows.length) return [];
-  const firstRow = lessonRows[0];
-  const mainSubject = cleanValue(cell(firstRow, subjectCol));
-  const mainRoom = cleanValue(cell(firstRow, roomCol));
-  if (!mainSubject) return [];
+  // Раньше «главной» всегда считалась первая физическая строка блока —
+  // это ломалось, когда для конкретного дня реальные данные начинались
+  // не с неё: например, в блоке с потоковым делением на несколько
+  // преподавателей у одного дня (скажем, четверга) строк больше, чем у
+  // другого (среды), и если среда «короче» и её данные из-за этого
+  // смещены на вторую строку блока — прежняя логика решала, что у среды
+  // на этом уроке вообще нет данных, и создавала лишнее «Окно». Такое же
+  // смещение возникает и в файлах с неполной неделей. Поэтому теперь для
+  // КАЖДОГО дня ищем первую строку именно с его собственными данными.
+  let anchorIdx = -1;
+  for (let i = 0; i < lessonRows.length; i++) {
+    if (cleanValue(cell(lessonRows[i], subjectCol))) { anchorIdx = i; break; }
+  }
+  if (anchorIdx === -1) return [];
+
+  const mainSubject = cleanValue(cell(lessonRows[anchorIdx], subjectCol));
+  const mainRoom = cleanValue(cell(lessonRows[anchorIdx], roomCol));
 
   const subjectVariants = [[mainSubject, mainRoom]];
   const teachers = [];
-  for (let i = 1; i < lessonRows.length; i++) {
+  for (let i = anchorIdx + 1; i < lessonRows.length; i++) {
     const row = lessonRows[i];
     const subjectValue = cleanValue(cell(row, subjectCol));
     const roomValue = cleanValue(cell(row, roomCol));
@@ -614,7 +645,7 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.5.0'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.5.1'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES = {
@@ -624,6 +655,35 @@ const LESSON_TIMES = {
 const timeText = num => LESSON_TIMES[num] || '';
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+/* ---------- Светлая/тёмная тема ---------- */
+/* Хранится в localStorage (крошечное значение, как и избранное) и не
+   зависит от версии кэша — переживает обновления приложения. Применяется
+   через класс theme-dark на <body>, все цвета — CSS-переменные, поэтому
+   переключение не требует ничего перерисовывать. */
+const THEME_KEY = 'raspisanie547-theme';
+function getTheme() {
+  try { return localStorage.getItem(THEME_KEY) || 'light'; }
+  catch (err) { return 'light'; }
+}
+function applyTheme(theme) {
+  document.body.classList.toggle('theme-dark', theme === 'dark');
+  document.querySelectorAll('.theme-toggle').forEach(btn => {
+    btn.textContent = theme === 'dark' ? '☀️ Светлая тема' : '🌙 Тёмная тема';
+  });
+}
+function setTheme(theme) {
+  try { localStorage.setItem(THEME_KEY, theme); }
+  catch (err) { console.warn('Не удалось сохранить тему:', err); }
+  applyTheme(theme);
+}
+function toggleTheme() {
+  setTheme(getTheme() === 'dark' ? 'light' : 'dark');
+}
+function themeToggleButtonHtml() {
+  const label = getTheme() === 'dark' ? '☀️ Светлая тема' : '🌙 Тёмная тема';
+  return `<button class="btn secondary theme-toggle" type="button">${label}</button>`;
+}
 
 /* Оборачивает имя учителя/класса/кабинета в кликабельную ссылку — клик по
    ней переключает на соответствующую вкладку и сразу открывает расписание
@@ -726,6 +786,9 @@ function goTo(type, name) {
    пересборки innerHTML вкладок (что происходит постоянно), т.к. навешан
    на неизменный корневой контейнер, а не на конкретные элементы списков. */
 app.addEventListener('click', (e) => {
+  const themeBtn = e.target.closest('.theme-toggle');
+  if (themeBtn) { toggleTheme(); return; }
+
   const link = e.target.closest('.xlink');
   if (link) { goTo(link.dataset.type, link.dataset.name); return; }
 
@@ -824,8 +887,10 @@ function renderInitial(statusMsg, statusType) {
       <label class="btn" for="fileInput">📁 Загрузить файл Excel</label>
       <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
       <div class="status ${statusType||''}" style="margin-top:10px">${statusMsg ? esc(statusMsg) : 'Выберите файл с расписанием'}</div>
+      <div style="height:12px"></div>
+      ${themeToggleButtonHtml()}
       <div style="height:16px"></div>
-      <p style="font-size:12.5px;color:#9a9d8f">Разработчик: ${esc(APP_AUTHOR)}<br>${esc(APP_SCHOOL)}</p>
+      <p style="font-size:12.5px;color:var(--muted)">Разработчик: ${esc(APP_AUTHOR)}<br>${esc(APP_SCHOOL)}</p>
     </div>
     <footer class="hint">Файл обрабатывается полностью в браузере — данные никуда не отправляются.</footer>
   `;
@@ -845,17 +910,19 @@ function renderInitialWithSavedFile(saved) {
       <div style="height:8px"></div>
       <div class="status ok" style="margin-bottom:14px">
         📄 ${esc(saved.fileName)}<br>
-        <span style="font-size:12px;color:#9a9d8f">загружен ${esc(dateStr)}</span>
+        <span style="font-size:12px;color:var(--muted)">загружен ${esc(dateStr)}</span>
       </div>
       <button class="btn" type="button" id="useLastFileBtn">✅ Продолжить с этим файлом</button>
       <div style="height:10px"></div>
       <label class="btn secondary" for="fileInput">📁 Выбрать другой файл</label>
       <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
       <div style="height:10px"></div>
-      <a href="#" id="forgetLastFileBtn" style="font-size:12.5px;color:#9a9d8f">Забыть сохранённый файл</a>
+      <a href="#" id="forgetLastFileBtn" style="font-size:12.5px;color:var(--muted)">Забыть сохранённый файл</a>
       <div class="status" id="initStatus" style="margin-top:10px"></div>
+      <div style="height:12px"></div>
+      ${themeToggleButtonHtml()}
       <div style="height:16px"></div>
-      <p style="font-size:12.5px;color:#9a9d8f">Разработчик: ${esc(APP_AUTHOR)}<br>${esc(APP_SCHOOL)}</p>
+      <p style="font-size:12.5px;color:var(--muted)">Разработчик: ${esc(APP_AUTHOR)}<br>${esc(APP_SCHOOL)}</p>
     </div>
     <footer class="hint">Файл обрабатывается полностью в браузере — данные никуда не отправляются.</footer>
   `;
@@ -933,6 +1000,7 @@ function renderMain() {
         <label class="btn secondary" for="fileInput2">📁 Загрузить файл Excel</label>
         <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none">
         <div class="status ok">Загружен: ${esc(currentFileName)}</div>
+        ${themeToggleButtonHtml()}
       </div>
       <div class="stats" id="stats"></div>
       <div class="favorites-strip" id="favoritesStrip"></div>
@@ -1282,16 +1350,14 @@ function renderRoomsTab() {
     const byDay = {};
     roomLessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
 
-    let maxLessonNum = 0;
-    Object.values(byDay).forEach(list => list.forEach(l => { maxLessonNum = Math.max(maxLessonNum, l.lesson_num || 0); }));
-
     dayOrder.forEach(day => {
-      const dayLessons = byDay[day] || [];
+      if (!byDay[day] || !byDay[day].length) return;
       const byNum = {};
-      dayLessons.forEach(l => { byNum[l.lesson_num || 0] = l; });
+      byDay[day].forEach(l => { byNum[l.lesson_num || 0] = l; });
+      const dayMax = Math.max(...byDay[day].map(l => l.lesson_num || 0));
 
       html += `<div class="day-title">${cap(day)}:</div>`;
-      for (let num = 1; num <= maxLessonNum; num++) {
+      for (let num = 1; num <= dayMax; num++) {
         if (byNum[num]) {
           const l = byNum[num];
           html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
@@ -1301,8 +1367,14 @@ function renderRoomsTab() {
       }
     });
 
+    // Свободные уроки считаем от реальной длины учебного дня (10 уроков —
+    // столько же строк в таблице времени LESSON_TIMES), а не от того, до
+    // какого номера урока этот конкретный кабинет случайно использовался —
+    // иначе кабинет, занятый только по 3-й урок каждый день, показывал бы
+    // "0 свободных", хотя на деле свободен с 4-го по 10-й все дни.
+    const LESSONS_PER_DAY = Object.keys(LESSON_TIMES).length;
     const totalLessons = roomLessons.length;
-    const freeLessons = maxLessonNum > 0 ? (maxLessonNum * dayOrder.length) - totalLessons : 0;
+    const freeLessons = LESSONS_PER_DAY * dayOrder.length - totalLessons;
     html += `<div class="room-stats">Статистика: занято уроков — ${totalLessons}, свободно — ${freeLessons}</div>`;
 
     el.innerHTML = html;
@@ -1333,7 +1405,7 @@ function renderTeacherSearchTab() {
 
   panel.innerHTML = `
     <div style="font-size:20px;font-weight:700">🔍 Поиск свободного учителя</div>
-    <div style="font-size:13.5px;color:#5a5f54;margin-top:2px">Выберите день и урок, чтобы найти свободных учителей</div>
+    <div style="font-size:13.5px;color:var(--muted);margin-top:2px">Выберите день и урок, чтобы найти свободных учителей</div>
     <hr class="divider">
     <div style="font-weight:700;font-size:14.5px;margin-bottom:8px">Основные параметры поиска:</div>
     <div class="row">
@@ -1343,7 +1415,7 @@ function renderTeacherSearchTab() {
     </div>
     <hr class="divider">
     <div style="font-weight:700;font-size:14.5px">Дополнительная фильтрация:</div>
-    <div style="font-size:12px;color:#8a8d80;margin-bottom:8px">(не обязательно)</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">(не обязательно)</div>
     <div class="row">
       <select id="tsSubject"><option value="Все предметы">Все предметы</option>${subjectsList.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}</select>
       <select id="tsGrade"><option value="Все параллели">Все параллели</option>${gradesList.map(g => `<option value="${g}">${g}</option>`).join('')}</select>
@@ -1425,7 +1497,7 @@ function renderRoomSearchTab() {
 
   panel.innerHTML = `
     <div style="font-size:20px;font-weight:700">🔍 Поиск свободного кабинета</div>
-    <div style="font-size:13.5px;color:#5a5f54;margin-top:2px">Выберите день и урок, чтобы найти свободные кабинеты</div>
+    <div style="font-size:13.5px;color:var(--muted);margin-top:2px">Выберите день и урок, чтобы найти свободные кабинеты</div>
     <hr class="divider">
     <div class="row">
       <select id="rsDay"><option value="">День недели</option>${dayOrder.map(d => `<option value="${d}">${cap(d)}</option>`).join('')}</select>
@@ -1485,6 +1557,7 @@ function renderRoomSearchTab() {
    5. СТАРТ
    ========================================================= */
 (async function bootApp() {
+  applyTheme(getTheme());
   await syncAppVersionFromServiceWorker();
   let saved = null;
   try { saved = await loadLastFile(); } catch (err) { /* без сохранённого файла — обычный запуск */ }
