@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.4.2</title>
+<title>Расписание547 v1.4.3</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -595,7 +595,7 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.4.2'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.4.3'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES = {
@@ -948,18 +948,27 @@ function renderClassesTab() {
           // Поток делится на несколько групп — все группы рисуются ВНУТРИ
           // одного цветного блока урока, а не рядом с ним (раньше уходили
           // за его границы и выглядели оторванными от заголовка урока).
+          // Название предмета всегда стоит рядом с номером урока на одной
+          // строке — если предмет для всех групп один и тот же, ниже просто
+          // список «педагог (кабинет)» без повторения названия; если группы
+          // занимаются разными предметами — название повторяется у каждой
+          // строки, чтобы было понятно, какой педагог что ведёт.
+          const sameSubjectForAll = subjectEntries.length === 1;
+          const headerText = sameSubjectForAll
+            ? subjectEntries[0][0]
+            : subjectEntries.map(([subject]) => subject).join(' / ');
           let groupsHtml = '';
           subjectEntries.forEach(([subject, subjLessons]) => {
             if (subjLessons.length > 1) {
-              groupsHtml += `<div class="lesson-line">${esc(subject)}</div>`;
               const parts = subjLessons.map(l => `${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})`);
               groupsHtml += `<div class="lesson-sub">${parts.join(' | ')}</div>`;
             } else {
               const l = subjLessons[0];
-              groupsHtml += `<div class="lesson-line">${esc(subject)} - ${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</div>`;
+              const prefix = sameSubjectForAll ? '' : `${esc(subject)} - `;
+              groupsHtml += `<div class="lesson-sub">${prefix}${esc(l.teacher||'не указан')} (каб. ${esc(l.room||'?')})</div>`;
             }
           });
-          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок:</span><span class="slot-time">${esc(timeText(num))}</span></div>${groupsHtml}</div>`;
+          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(headerText)}</span><span class="slot-time">${esc(timeText(num))}</span></div>${groupsHtml}</div>`;
         }
       }
     });
