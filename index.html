@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.5.2</title>
+<title>Расписание547 v1.5.3</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -238,6 +238,21 @@
 
   .fav-toggle{cursor:pointer;font-size:17px;margin-left:8px;user-select:none;vertical-align:middle;color:var(--gold);}
   .fav-toggle:hover{opacity:.75;}
+
+  .drop-overlay{
+    position:fixed;inset:0;z-index:1000;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(47,93,80,.12);
+    backdrop-filter:blur(1px);
+    opacity:0;pointer-events:none;
+    transition:opacity .15s ease;
+  }
+  .drop-overlay.active{opacity:1;pointer-events:auto;}
+  .drop-overlay-box{
+    background:var(--panel);border:2px dashed var(--accent);border-radius:14px;
+    padding:36px 48px;font-size:17px;font-weight:600;color:var(--accent);
+    text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.15);
+  }
 
   footer.hint{
     margin-top:40px;font-size:12.5px;color:var(--muted);text-align:center;
@@ -668,7 +683,7 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.5.2'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.5.3'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES = {
@@ -999,10 +1014,10 @@ function loadScheduleFromArrayBuffer(arrayBuffer, fileName) {
   renderMain();
 }
 
-function onFileSelected(e) {
-  const file = e.target.files[0];
+/* Общая обработка файла — используется и при выборе через кнопку,
+   и при перетаскивании файла в окно (см. setupDragAndDrop). */
+function handleIncomingFile(file) {
   if (!file) return;
-
   const reader = new FileReader();
   reader.onload = (evt) => {
     try {
@@ -1015,6 +1030,53 @@ function onFileSelected(e) {
   };
   reader.onerror = () => renderInitial('Не удалось прочитать файл', 'error');
   reader.readAsArrayBuffer(file);
+}
+function onFileSelected(e) {
+  handleIncomingFile(e.target.files[0]);
+}
+
+/* ---------- Drag-and-drop ----------
+   Работает на всё окно приложения, независимо от того, какой экран сейчас
+   показан (начальный или основной) — файл можно перетащить в любой момент,
+   он заменит текущее расписание, как и обычная загрузка через кнопку. */
+function setupDragAndDrop() {
+  let dragDepth = 0; // счётчик вложенных dragenter/dragleave — иначе overlay мигает при заходе на дочерние элементы
+  const overlay = document.createElement('div');
+  overlay.id = 'dropOverlay';
+  overlay.className = 'drop-overlay';
+  overlay.innerHTML = '<div class="drop-overlay-box">📁 Отпустите файл, чтобы загрузить расписание</div>';
+  document.body.appendChild(overlay);
+
+  const isFileDrag = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+
+  window.addEventListener('dragenter', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    overlay.classList.add('active');
+  });
+  window.addEventListener('dragover', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault(); // обязательно, иначе браузер откроет файл вместо drop-события
+  });
+  window.addEventListener('dragleave', (e) => {
+    if (!isFileDrag(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) overlay.classList.remove('active');
+  });
+  window.addEventListener('drop', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    overlay.classList.remove('active');
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    if (!/\.(xlsx|xls)$/i.test(file.name)) {
+      renderInitial('Перетащенный файл должен быть в формате .xlsx или .xls', 'error');
+      return;
+    }
+    handleIncomingFile(file);
+  });
 }
 
 /* =========================================================
@@ -1585,6 +1647,7 @@ function renderRoomSearchTab() {
    ========================================================= */
 (async function bootApp() {
   applyTheme(getTheme());
+  setupDragAndDrop();
   await syncAppVersionFromServiceWorker();
   let saved = null;
   try { saved = await loadLastFile(); } catch (err) { /* без сохранённого файла — обычный запуск */ }
@@ -1618,8 +1681,22 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
           window.location.reload();
         });
       }
-      // на всякий случай явно просим браузер проверить, нет ли новой версии
-      registration.update().catch(() => {});
+      const checkForUpdate = () => registration.update().catch(() => {});
+
+      // Проверяем сразу при открытии...
+      checkForUpdate();
+
+      // ...и каждый раз, когда приложение возвращается на передний план —
+      // это главный случай: открытие иконки уже установленного PWA часто
+      // просто «будит» существующую вкладку в фоне, а не загружает страницу
+      // заново, поэтому обычная проверка при загрузке страницы не сработает.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkForUpdate();
+      });
+
+      // На случай, если приложение остаётся открытым подолгу без сворачивания —
+      // дополнительно проверяем раз в час.
+      setInterval(checkForUpdate, 60 * 60 * 1000);
     }).catch((err) => {
       console.warn('Не удалось зарегистрировать service worker:', err);
     });
