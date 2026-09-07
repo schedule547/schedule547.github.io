@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.5.1</title>
+<title>Расписание547 v1.5.2</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
@@ -453,14 +453,33 @@ function extractLessonsFromBlock(lessonRows, subjectCol, roomCol) {
   }
   return resultLessons;
 }
-function processLessonBlock(rows, startRow, className, lessonNum, dayColumns, scheduleData) {
+/* Если ячейка с номером урока объединена на несколько строк (типичная
+   разметка потоковых уроков), возвращает последнюю строку этого
+   объединения (0-индексация, как в SheetJS !merges). Если объединения
+   нет — возвращает саму rowIndex (блок из одной строки, как раньше). */
+function mergedRowSpanEnd(merges, colIndex, rowIndex) {
+  if (!merges) return rowIndex;
+  for (const m of merges) {
+    if (m.s.c === colIndex && m.e.c === colIndex && m.s.r === rowIndex) {
+      return m.e.r;
+    }
+  }
+  return rowIndex;
+}
+function processLessonBlock(rows, startRow, className, lessonNum, dayColumns, scheduleData, merges) {
   const lessonRows = [rows[startRow] || []];
   let currentRow = startRow + 1;
+  // Учитель часто стоит не сразу под предметом, а через одну-две полностью
+  // пустые строки-«распорки» (визуальное оформление внутри объединённой
+  // ячейки номера урока). Такие строки нельзя считать концом блока, пока
+  // мы не вышли за пределы объединения номера урока — иначе учитель на
+  // следующей строке молча теряется, а весь урок пропадает как «Окно».
+  const mergedEnd = mergedRowSpanEnd(merges, 0, startRow);
   while (currentRow < rows.length) {
     const row = rows[currentRow] || [];
     if (extractClassName(cell(row, 0)) || extractLessonNumber(cell(row, 0)) !== null) break;
     const allEmpty = row.length === 0 || row.every(c => cleanValue(c) === '');
-    if (allEmpty) break;
+    if (allEmpty && currentRow > mergedEnd) break;
     lessonRows.push(row);
     currentRow++;
   }
@@ -469,7 +488,10 @@ function processLessonBlock(rows, startRow, className, lessonNum, dayColumns, sc
     for (const [subject, rooms, teachers] of lessonsForDay) {
       if (!subject) continue;
       const canonicalSubject = normalizeSubject(subject);
-      teachers.forEach((teacher, i) => {
+      // Если учителя не нашлось совсем — всё равно показываем сам урок
+      // (с пометкой «не указан»), а не молча теряем его целиком.
+      const teacherList = teachers.length ? teachers : [''];
+      teacherList.forEach((teacher, i) => {
         const teacherRoom = i < rooms.length ? rooms[i] : (rooms.length ? rooms[0] : '');
         const lessonData = { subject: canonicalSubject, room: teacherRoom, teacher, class: className, lesson_num: lessonNum, day };
         if (!scheduleData.classes[className][day][lessonNum]) scheduleData.classes[className][day][lessonNum] = [];
@@ -499,7 +521,7 @@ function buildSecondaryStructures(scheduleData) {
     }
   }
 }
-function parseRows(rows) {
+function parseRows(rows, merges) {
   const scheduleData = createScheduleData();
   let currentClass = null;
   let dayColumns = {};
@@ -516,7 +538,7 @@ function parseRows(rows) {
     if (isDaysHeader(row)) { dayColumns = mapDayColumns(row); rowIdx++; continue; }
     const lessonNum = extractLessonNumber(cell(row, 0));
     if (lessonNum !== null && currentClass && Object.keys(dayColumns).length) {
-      processLessonBlock(rows, rowIdx, currentClass, lessonNum, dayColumns, scheduleData);
+      processLessonBlock(rows, rowIdx, currentClass, lessonNum, dayColumns, scheduleData, merges);
       rowIdx = findNextLessonRow(rows, rowIdx + 1);
     } else { rowIdx++; }
   }
@@ -572,14 +594,15 @@ function ensureClassEntry(scheduleData, className) {
     DAYS.forEach(d => { scheduleData.classes[className][d] = {}; });
   }
 }
-function processTeacherLessonBlock(rows, startRow, teacherName, lessonNum, dayColumns, scheduleData) {
+function processTeacherLessonBlock(rows, startRow, teacherName, lessonNum, dayColumns, scheduleData, merges) {
   const lessonRows = [rows[startRow] || []];
   let currentRow = startRow + 1;
+  const mergedEnd = mergedRowSpanEnd(merges, 0, startRow);
   while (currentRow < rows.length) {
     const row = rows[currentRow] || [];
     if (isSoleCellHeader(row) || extractLessonNumber(cell(row, 0)) !== null) break;
     const allEmpty = row.length === 0 || row.every(c => cleanValue(c) === '');
-    if (allEmpty) break;
+    if (allEmpty && currentRow > mergedEnd) break;
     lessonRows.push(row); // строки-продолжения — параллельные группы у того же педагога в это же время
     currentRow++;
   }
@@ -598,7 +621,7 @@ function processTeacherLessonBlock(rows, startRow, teacherName, lessonNum, dayCo
     }
   }
 }
-function parseTeacherRows(rows) {
+function parseTeacherRows(rows, merges) {
   const scheduleData = createScheduleData();
   let currentTeacher = null;
   let dayColumns = {};
@@ -612,7 +635,7 @@ function parseTeacherRows(rows) {
     if (isDaysHeader(row)) { dayColumns = mapDayColumns(row); rowIdx++; continue; }
     const lessonNum = extractLessonNumber(cell(row, 0));
     if (lessonNum !== null && currentTeacher && Object.keys(dayColumns).length) {
-      processTeacherLessonBlock(rows, rowIdx, currentTeacher, lessonNum, dayColumns, scheduleData);
+      processTeacherLessonBlock(rows, rowIdx, currentTeacher, lessonNum, dayColumns, scheduleData, merges);
       rowIdx = findNextTeacherBlockRow(rows, rowIdx + 1);
     } else { rowIdx++; }
   }
@@ -633,8 +656,8 @@ function detectScheduleFormat(rows) {
   }
   return 'classes';
 }
-function parseSchedule(rows) {
-  return detectScheduleFormat(rows) === 'teachers' ? parseTeacherRows(rows) : parseRows(rows);
+function parseSchedule(rows, merges) {
+  return detectScheduleFormat(rows) === 'teachers' ? parseTeacherRows(rows, merges) : parseRows(rows, merges);
 }
 
 /* =========================================================
@@ -645,7 +668,7 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.5.1'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.5.2'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES = {
@@ -966,7 +989,11 @@ function loadScheduleFromArrayBuffer(arrayBuffer, fileName) {
   });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
-  scheduleData = parseSchedule(rows);
+  // Объединённые ячейки (например, номер урока на 4 строки при потоковом
+  // делении) нужны парсеру, чтобы верно определять границы блока урока —
+  // см. mergedRowSpanEnd() и комментарий в processLessonBlock().
+  const merges = sheet['!merges'] || [];
+  scheduleData = parseSchedule(rows, merges);
   currentFileName = fileName;
   console.log('Найдено классов:', Object.keys(scheduleData.classes).length);
   renderMain();
