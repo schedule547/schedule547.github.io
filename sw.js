@@ -5,7 +5,7 @@
 // приложения. Значение отсюда автоматически подхватывается интерфейсом
 // (index.html читает этот файл и вытаскивает номер регулярным выражением) —
 // вручную дублировать номер версии больше не нужно.
-const CACHE_VERSION = '1.5.3';
+const CACHE_VERSION = '1.6.0';
 const CACHE_NAME = 'raspisanie547-' + CACHE_VERSION;
 
 // Всё, что нужно приложению для работы офлайн: сама страница (как запасной
@@ -13,7 +13,7 @@ const CACHE_NAME = 'raspisanie547-' + CACHE_VERSION;
 const APP_SHELL = [
   './',
   './index.html',
-  './sw.js',
+  './manifest.json',
   './icon-192.png',
   './icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
