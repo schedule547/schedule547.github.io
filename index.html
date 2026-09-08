@@ -3,11 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.5.3</title>
+<title>Расписание547 v1.6.0</title>
 
 <!-- PWA: манифест и иконки — благодаря им приложение можно установить
      на Android («Добавить на главный экран») как отдельное приложение. -->
-<link rel="sw" href="sw.js">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1a56db">
 <link rel="icon" href="icon-192.png" type="image/png">
@@ -210,6 +209,17 @@
   }
   .slot.busy{background:var(--busy-bg);border:1px solid var(--busy-line);}
   .slot.free{background:var(--free-bg);color:var(--free-text);}
+  .slot.conflict{background:rgba(178,59,59,.08);border:1px solid var(--danger);}
+  .slot-current{
+    outline:3px solid var(--accent); outline-offset:-1px;
+    box-shadow:0 0 0 3px var(--accent-soft) inset;
+    position:relative;
+  }
+  .slot-current .slot-main::before{content:'▶ ';color:var(--accent);}
+  .slot-next{
+    outline:2px dashed var(--gold); outline-offset:-1px;
+  }
+  .slot-next .slot-main::before{content:'⏭ ';color:var(--gold);}
   .slot-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
   .slot-main{flex:1 1 auto;min-width:0;}
   .slot-time{flex:0 0 auto;font-size:12.5px;color:var(--muted);white-space:nowrap;padding-top:1px;}
@@ -684,7 +694,7 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.5.3'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.6.0'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES = {
@@ -692,6 +702,58 @@ const LESSON_TIMES = {
   6: '13:10-13:50', 7: '14:10-14:50', 8: '15:10-15:50', 9: '16:10-16:50', 10: '17:10-17:50'
 };
 const timeText = num => LESSON_TIMES[num] || '';
+
+/* ---------- Подсветка текущего/следующего урока ----------
+   Ориентируется на системные часы устройства — браузер не умеет отдельно
+   спрашивать «настоящее сетевое время», у него есть доступ только к
+   часам самого устройства (Date). На практике телефоны и компьютеры почти
+   всегда сами синхронизируют часы по сети, так что для этой задачи
+   разницы нет. */
+function getTodayDayName() {
+  const idx = new Date().getDay(); // 0=вс,1=пн,...,6=сб
+  const map = { 1: 'понедельник', 2: 'вторник', 3: 'среда', 4: 'четверг', 5: 'пятница' };
+  return map[idx] || null; // на выходных подсвечивать нечего
+}
+function timeRangeToMinutes(rangeStr) {
+  const [startStr, endStr] = rangeStr.split('-');
+  const toMin = s => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
+  return { start: toMin(startStr), end: toMin(endStr) };
+}
+function getCurrentAndNextLesson() {
+  const today = getTodayDayName();
+  if (!today) return { today: null, current: null, next: null };
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const nums = Object.keys(LESSON_TIMES).map(Number).sort((a, b) => a - b);
+  let current = null, next = null;
+  for (const n of nums) {
+    const { start, end } = timeRangeToMinutes(LESSON_TIMES[n]);
+    if (nowMin >= start && nowMin < end) { current = n; break; }
+  }
+  if (current === null) {
+    for (const n of nums) {
+      const { start } = timeRangeToMinutes(LESSON_TIMES[n]);
+      if (nowMin < start) { next = n; break; }
+    }
+  }
+  return { today, current, next };
+}
+/* Снимает прошлую подсветку и расставляет новую по всем видимым карточкам
+   уроков сразу на всех вкладках (Учителя/Классы/Кабинеты) — вызывается и
+   после каждой перерисовки расписания, и по таймеру (см. bootApp), чтобы
+   подсветка сама переезжала на следующий урок без перезагрузки страницы. */
+function applyTimeHighlight() {
+  document.querySelectorAll('.slot-current, .slot-next').forEach(el => {
+    el.classList.remove('slot-current', 'slot-next');
+  });
+  const { today, current, next } = getCurrentAndNextLesson();
+  if (!today) return;
+  if (current !== null) {
+    document.querySelectorAll(`.slot[data-day="${today}"][data-lesson="${current}"]`).forEach(el => el.classList.add('slot-current'));
+  } else if (next !== null) {
+    document.querySelectorAll(`.slot[data-day="${today}"][data-lesson="${next}"]`).forEach(el => el.classList.add('slot-next'));
+  }
+}
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
@@ -751,6 +813,100 @@ async function syncAppVersionFromServiceWorker() {
     // офлайн или файл открыт не через сайт — остаёмся на запасном значении
   }
   document.title = `${APP_NAME} v${APP_VERSION}`;
+}
+
+/* =========================================================
+   3а-1. АДМИНИСТРАТИВНАЯ ВКЛАДКА (скрытая проверка ошибок расписания)
+   ========================================================= */
+/* Доступ скрыт намеренно — обычный пользователь не должен на неё
+   натыкаться случайно. Открывается одним и тем же жестом что на телефоне,
+   что на компьютере: 7 кликов/тапов подряд (в течение 3 секунд) по строке
+   «Загружен: …» в шапке приложения. Состояние («открыта» или нет) хранится
+   в localStorage, поэтому один раз обнаруженная вкладка остаётся видимой
+   и в следующих сессиях — как скрытые «Параметры разработчика» в Android. */
+const ADMIN_UNLOCK_KEY = 'raspisanie547-admin-unlocked';
+function isAdminUnlocked() {
+  try { return localStorage.getItem(ADMIN_UNLOCK_KEY) === '1'; }
+  catch (err) { return false; }
+}
+function setAdminUnlocked(value) {
+  try { localStorage.setItem(ADMIN_UNLOCK_KEY, value ? '1' : '0'); }
+  catch (err) { /* хранилище недоступно — просто не сохраняем между сессиями */ }
+}
+let secretTapCount = 0;
+let secretTapTimer = null;
+function registerSecretTap() {
+  secretTapCount++;
+  clearTimeout(secretTapTimer);
+  secretTapTimer = setTimeout(() => { secretTapCount = 0; }, 3000);
+  if (secretTapCount >= 7) {
+    secretTapCount = 0;
+    setAdminUnlocked(!isAdminUnlocked());
+    renderMain();
+  }
+}
+
+/* Поиск конфликтов в расписании. Работает одинаково для файлов обоих
+   форматов («Классы» и «Педагоги»), т.к. к этому моменту оба уже собраны
+   в одну и ту же структуру scheduleData — отдельной логики на формат не
+   требуется.
+   - Конфликт учителя: один и тот же педагог в один день и на один и тот
+     же номер урока числится в РАЗНЫХ классах одновременно.
+   - Конфликт кабинета: один и тот же кабинет в один день и на один и тот
+     же номер урока используется РАЗНЫМИ классами одновременно. Несколько
+     параллельных групп ОДНОГО класса в одном кабинете (например, две
+     группы физкультуры в одном зале) конфликтом не считаются. */
+function findScheduleConflicts() {
+  function groupConflicts(entries) {
+    const result = [];
+    Object.entries(entries).forEach(([who, lessons]) => {
+      if (!who) return;
+      const byKey = {};
+      lessons.forEach(l => { (byKey[l.day + '|' + l.lesson_num] ??= []).push(l); });
+      Object.values(byKey).forEach(group => {
+        const classes = [...new Set(group.map(l => l.class).filter(Boolean))];
+        if (classes.length > 1) {
+          result.push({ who, day: group[0].day, lessonNum: group[0].lesson_num || 0, items: group });
+        }
+      });
+    });
+    result.sort((a, b) => dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day) || a.lessonNum - b.lessonNum);
+    return result;
+  }
+  return {
+    teacherConflicts: groupConflicts(scheduleData.teachers),
+    roomConflicts: groupConflicts(scheduleData.rooms)
+  };
+}
+
+function renderAdminTab() {
+  const panel = document.getElementById('panel-admin');
+  if (!panel) return;
+  const { teacherConflicts, roomConflicts } = findScheduleConflicts();
+
+  function renderGroup(title, list) {
+    if (!list.length) return `<div class="empty">${esc(title)}: конфликтов не найдено</div>`;
+    let html = `<div class="day-title">${esc(title)} — найдено: ${list.length}</div>`;
+    list.forEach(c => {
+      const details = c.items.map(l =>
+        `${xlink('class', l.class, l.class || '?')} — ${esc(l.subject || '?')} (${xlink('teacher', l.teacher, l.teacher || 'не указан')}, каб. ${xlink('room', l.room, l.room || '?')})`
+      ).join('<br>');
+      html += `<div class="slot busy conflict"><div class="slot-row"><span class="slot-main"><b>${esc(c.who)}</b> — ${cap(c.day)}, ${c.lessonNum} урок</span><span class="slot-time">${esc(timeText(c.lessonNum))}</span></div><div class="lesson-sub">${details}</div></div>`;
+    });
+    return html;
+  }
+
+  panel.innerHTML = `
+    <div style="font-size:20px;font-weight:700;margin-bottom:8px">🛠 Проверка расписания</div>
+    <p style="color:var(--muted);font-size:13px;margin:-4px 0 14px">
+      Эта вкладка скрыта от обычных пользователей и предназначена только для проверки корректности файла расписания.
+      Обратите внимание: большие общие пространства (спортзалы, актовый зал) часто по школьной практике легитимно
+      делят несколько классов одновременно — такие случаи в списке кабинетов не обязательно являются реальной ошибкой.
+    </p>
+    ${renderGroup('👨\u200d🏫 Конфликты учителей (один педагог в разных классах в одно время)', teacherConflicts)}
+    <hr class="divider">
+    ${renderGroup('🚪 Конфликты кабинетов (разные классы в одном кабинете в одно время)', roomConflicts)}
+  `;
 }
 
 /* =========================================================
@@ -825,6 +981,9 @@ function goTo(type, name) {
    пересборки innerHTML вкладок (что происходит постоянно), т.к. навешан
    на неизменный корневой контейнер, а не на конкретные элементы списков. */
 app.addEventListener('click', (e) => {
+  const secretTap = e.target.closest('.secret-tap');
+  if (secretTap) { registerSecretTap(); return; }
+
   const themeBtn = e.target.closest('.theme-toggle');
   if (themeBtn) { toggleTheme(); return; }
 
@@ -1084,12 +1243,13 @@ function setupDragAndDrop() {
    4. ОСНОВНОЙ ЭКРАН
    ========================================================= */
 function renderMain() {
+  const adminOn = isAdminUnlocked();
   app.innerHTML = `
     <div class="sticky-header">
       <div class="topbar">
         <label class="btn secondary" for="fileInput2">📁 Загрузить файл Excel</label>
         <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none">
-        <div class="status ok">Загружен: ${esc(currentFileName)}</div>
+        <div class="status ok secret-tap" title="">Загружен: ${esc(currentFileName)}</div>
         ${themeToggleButtonHtml()}
       </div>
       <div class="stats" id="stats"></div>
@@ -1100,6 +1260,7 @@ function renderMain() {
         <button class="tab-btn" data-tab="rooms">🚪 Кабинеты</button>
         <button class="tab-btn" data-tab="teacherSearch">🔍 Поиск учителя</button>
         <button class="tab-btn" data-tab="roomSearch">🔍 Поиск кабинета</button>
+        ${adminOn ? '<button class="tab-btn" data-tab="admin">🛠 Проверка</button>' : ''}
       </div>
     </div>
     <div class="tab-panel active" id="panel-teachers"></div>
@@ -1107,6 +1268,7 @@ function renderMain() {
     <div class="tab-panel" id="panel-rooms"></div>
     <div class="tab-panel" id="panel-teacherSearch"></div>
     <div class="tab-panel" id="panel-roomSearch"></div>
+    ${adminOn ? '<div class="tab-panel" id="panel-admin"></div>' : ''}
   `;
   document.getElementById('fileInput2').addEventListener('change', onFileSelected);
 
@@ -1127,6 +1289,8 @@ function renderMain() {
   renderRoomsTab();
   renderTeacherSearchTab();
   renderRoomSearchTab();
+  if (adminOn) renderAdminTab();
+  applyTimeHighlight();
 }
 
 /* ---------- Вкладка «Учителя» ---------- */
@@ -1165,14 +1329,15 @@ function renderTeachersTab() {
         for (let num = 1; num <= dayMax; num++) {
           const l = byNum[num];
           if (l) {
-            html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${xlink('class', l.class, l.class||'?')} - ${esc(l.subject||'?')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+            html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${xlink('class', l.class, l.class||'?')} - ${esc(l.subject||'?')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
           } else {
-            html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+            html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
           }
         }
       });
     }
     el.innerHTML = html;
+    applyTimeHighlight();
   });
 }
 
@@ -1215,7 +1380,7 @@ function renderClassesTab() {
       for (let num = 1; num <= dayMax; num++) {
         const lessons = dayLessons[num];
         if (!lessons || !lessons.length) {
-          html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
           continue;
         }
         const bySubject = {};
@@ -1223,7 +1388,7 @@ function renderClassesTab() {
         const subjectEntries = Object.entries(bySubject);
         if (subjectEntries.length === 1 && subjectEntries[0][1].length === 1) {
           const l = subjectEntries[0][1][0];
-          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         } else {
           // Поток делится на несколько групп — все группы рисуются ВНУТРИ
           // одного цветного блока урока, а не рядом с ним (раньше уходили
@@ -1248,11 +1413,12 @@ function renderClassesTab() {
               groupsHtml += `<div class="lesson-sub">${prefix}${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</div>`;
             }
           });
-          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(headerText)}</span><span class="slot-time">${esc(timeText(num))}</span></div>${groupsHtml}</div>`;
+          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(headerText)}</span><span class="slot-time">${esc(timeText(num))}</span></div>${groupsHtml}</div>`;
         }
       }
     });
     el.innerHTML = html;
+    applyTimeHighlight();
   });
 
   exportBtn.addEventListener('click', () => {
@@ -1450,9 +1616,9 @@ function renderRoomsTab() {
       for (let num = 1; num <= dayMax; num++) {
         if (byNum[num]) {
           const l = byNum[num];
-          html += `<div class="slot busy"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         } else {
-          html += `<div class="slot free"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         }
       }
     });
@@ -1468,6 +1634,7 @@ function renderRoomsTab() {
     html += `<div class="room-stats">Статистика: занято уроков — ${totalLessons}, свободно — ${freeLessons}</div>`;
 
     el.innerHTML = html;
+    applyTimeHighlight();
   });
 }
 
@@ -1649,6 +1816,7 @@ function renderRoomSearchTab() {
 (async function bootApp() {
   applyTheme(getTheme());
   setupDragAndDrop();
+  setInterval(applyTimeHighlight, 60 * 1000); // подсветка сама сдвигается на следующий урок без перезагрузки
   await syncAppVersionFromServiceWorker();
   let saved = null;
   try { saved = await loadLastFile(); } catch (err) { /* без сохранённого файла — обычный запуск */ }
