@@ -3,10 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.6.0</title>
+<title>Расписание547 v1.6.2</title>
 
-<!-- PWA: манифест и иконки — благодаря им приложение можно установить
-     на Android («Добавить на главный экран») как отдельное приложение. -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1a56db">
 <link rel="icon" href="icon-192.png" type="image/png">
@@ -15,14 +13,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Расписание547">
 
-<!--
-  SheetJS (xlsx) подключён с CDN. Если на рабочих компьютерах нет доступа
-  в интернет — см. инструкцию в конце чата: нужно скачать xlsx.full.min.js
-  один раз и вставить его содержимое прямо сюда, между <script></script>,
-  вместо строки со src. Тогда файл будет работать полностью офлайн.
-  (Для PWA-версии это не обязательно: сервис-воркер сам закэширует эту
-  библиотеку при первом заходе — см. sw.js.)
--->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <style>
@@ -41,8 +31,8 @@
     --danger:#b23b3b;
     --muted:#6b6f63;
   }
-  /* Тёмная тема — та же система переменных с другими значениями,
-     переключается добавлением класса theme-dark на <body> (см. JS). */
+  /* Тёмная тема
+     переключается добавлением класса theme-dark на <body>. */
   body.theme-dark{
     --ink:#e8e6df;
     --paper:#181b17;
@@ -276,7 +266,7 @@
 
 <script>
 /* =========================================================
-   1. ПАРСЕР (портирован из schedule_parser.py)
+   1. ПАРСЕР
    ========================================================= */
 const DAYS = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница'];
 const CLASS_LETTERS = 'абвгдежзиклмнопрстуфхцчшщъыьэюя';
@@ -292,8 +282,7 @@ function cell(row, idx) {
 function cleanValue(value) {
   if (value === undefined || value === null || value === '') return '';
   let cleaned = String(value).trim().replace(/"/g, '');
-  // убираем случайные одиночные кавычки/апострофы по краям значения —
-  // такие артефакты копипаста встречаются в исходном файле, например «Лит-ра'»
+  // убираем случайные одиночные кавычки/апострофы по краям значения
   cleaned = cleaned.replace(/^[''`\u2018\u2019]+|[''`\u2018\u2019]+$/g, '').trim();
   return cleaned === 'nan' ? '' : cleaned;
 }
@@ -304,16 +293,9 @@ function extractClassName(rawValue) {
   return re.test(value) ? value : null;
 }
 function isDaysHeader(row) {
-  // раньше проверялось только, что в первой колонке дня стоит «понедельник»/«вторник» —
-  // это ломалось на неполных неделях (например, когда выложили только среду и четверг).
-  // теперь ищем любое известное название дня в любой из колонок-заголовков дней.
   return Object.keys(mapDayColumns(row)).length > 0;
 }
 function mapDayColumns(row) {
-  // важно: subject/room берутся из ТОЙ ЖЕ колонки, где реально найдено название дня,
-  // а не пересчитываются по порядковому номеру среди найденных дней. Это защищает от
-  // ситуации, когда в файле неполной недели пустые колонки понедельника/вторника
-  // physически остаются в таблице (а не удаляются) — иначе данные читались бы не из тех колонок.
   const dayMap = {};
   const maxCol = Math.min(12, row.length);
   for (let colIdx = 1; colIdx < maxCol; colIdx += 2) {
@@ -332,30 +314,28 @@ function extractLessonNumber(rawValue) {
   return (num >= 1 && num <= 10) ? num : null;
 }
 /* ---------- Нормализация названий предметов ----------
-   Один и тот же предмет в исходном файле часто записан по-разному:
-   «Геометрия» / «Геометр.» / опечатки вроде «Геметр.». Чтобы такие
-   записи не расходились по разным карточкам, приводим их к единому
+   Чтобы записи не расходились по разным карточкам, приводим их к единому
    каноническому названию через subjectKey() — ключ без пробелов, точек
    и без учёта регистра. Благодаря этому, например, «Рус. яз.» и
-   «Рус.яз.» совпадают автоматически, даже без явной записи в словаре;
-   в словарь попадают только реальные сокращения/опечатки/короткие формы. */
+   «Рус.яз.» совпадают автоматически, даже без явной записи в словаре; */
 const SUBJECT_CANON = {
   'русяз': 'Русский язык', 'русз': 'Русский язык', 'рус': 'Русский язык',
   'русскийязык': 'Русский язык', 'русский': 'Русский язык',
   'англяз': 'Английский язык', 'англ': 'Английский язык',
   'английский': 'Английский язык', 'английскийязык': 'Английский язык',
-  'китяз': 'Китайский язык', 'кит': 'Китайский язык', 'Китязык': 'Китайский язык',
-  'китайский': 'Китайский язык', 'китайскийязык': 'Китайский язык',
+  'китяз': 'Китайский язык', 'кит': 'Китайский язык',
+  'китайский': 'Китайский язык', 'китайскийязык': 'Китайский язык', 'китязык': 'Китайский язык',
+  'китаевед' : 'Китаевед',
   'матем': 'Математика', 'мат': 'Математика', 'математика': 'Математика',
   'алгебра': 'Алгебра',
   'геометр': 'Геометрия', 'геметр': 'Геометрия', 'геометрия': 'Геометрия',
   'физика': 'Физика',
   'биолог': 'Биология', 'биол': 'Биология', 'биология': 'Биология',
-  'географ': 'География', 'геогр': 'География', 'география': 'География',
-  'история': 'История',
+  'географ': 'География', 'геогр': 'География', 'география': 'География', 'геграф': 'География',
+  'история': 'История', 'истор': 'История',
   'истспб': 'История СПб', 'историяспб': 'История СПб',
   'лит-ра': 'Литература', 'литра': 'Литература', 'литература': 'Литература',
-  'инф-ка': 'Информатика', 'инф': 'Информатика', 'информатика': 'Информатика',
+  'инф-ка': 'Информатика', 'инф': 'Информатика', 'информатика': 'Информатика', 'информат': 'Информатика',
   'общ-ние': 'Обществознание', 'общ': 'Обществознание', 'обществознание': 'Обществознание',
   'химия': 'Химия', 'хим': 'Химия',
   'чтение': 'Чтение', 'чтене': 'Чтение',
@@ -363,6 +343,7 @@ const SUBJECT_CANON = {
   'окрмир': 'Окружающий мир', 'окружающиймир': 'Окружающий мир',
   'физ-ра': 'Физкультура', 'физра': 'Физкультура', 'физкультура': 'Физкультура',
   'плав-е': 'Плавание', 'плавание': 'Плавание',
+  'финансграмот': 'Финансовая грамотность', 'фингр': 'Финансовая грамотность',
 };
 function subjectKey(base) {
   return base.toLowerCase().replace(/\s+/g, '').replace(/\.+/g, '');
@@ -379,14 +360,7 @@ function normalizeSubject(rawValue) {
   return (canonical || base) + (electiveMatch ? ' (Э)' : '');
 }
 
-/* ---------- Определение «это учитель», а не «это предмет» ----------
-   Раньше это делалось по вручную собранному списку сокращений предметов
-   (NON_TEACHERS) — каждый новый вариант сокращения приходилось добавлять
-   туда отдельно, и именно рассинхронизация с реальными сокращениями и
-   приводила к путанице учитель/предмет. Теперь список известных
-   предметов один — SUBJECT_CANON, тот же, что убирает дубли предметов,
-   а учитель распознаётся по формату ФИО «Фамилия И.О.», а не по
-   исключению из списка. */
+/* ---------- Определение «это учитель», а не «это предмет» ----------*/
 const TEACHER_NAME_RE = /^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+[А-ЯЁ]\.\s*[А-ЯЁ]?\.?$/;
 const TEACHER_FULLNAME_RE = /^[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+$/;
 const VACANCY_RE = /^вакан/i;
@@ -412,77 +386,45 @@ function isTeacherName(text) {
 }
 function extractLessonsFromBlock(lessonRows, subjectCol, roomCol) {
   if (!lessonRows.length) return [];
-  // Раньше «главной» всегда считалась первая физическая строка блока —
-  // это ломалось, когда для конкретного дня реальные данные начинались
-  // не с неё: например, в блоке с потоковым делением на несколько
-  // преподавателей у одного дня (скажем, четверга) строк больше, чем у
-  // другого (среды), и если среда «короче» и её данные из-за этого
-  // смещены на вторую строку блока — прежняя логика решала, что у среды
-  // на этом уроке вообще нет данных, и создавала лишнее «Окно». Такое же
-  // смещение возникает и в файлах с неполной неделей. Поэтому теперь для
-  // КАЖДОГО дня ищем первую строку именно с его собственными данными.
   let anchorIdx = -1;
   for (let i = 0; i < lessonRows.length; i++) {
     if (cleanValue(cell(lessonRows[i], subjectCol))) { anchorIdx = i; break; }
   }
   if (anchorIdx === -1) return [];
+  const segments = [];
+  const startSegment = (subjectText, roomText) => {
+    const seg = { subject: subjectText, rooms: roomText ? [roomText] : [], teachers: [] };
+    segments.push(seg);
+    return seg;
+  };
+  let seg = startSegment(cleanValue(cell(lessonRows[anchorIdx], subjectCol)), cleanValue(cell(lessonRows[anchorIdx], roomCol)));
 
-  const mainSubject = cleanValue(cell(lessonRows[anchorIdx], subjectCol));
-  const mainRoom = cleanValue(cell(lessonRows[anchorIdx], roomCol));
-
-  const subjectVariants = [[mainSubject, mainRoom]];
-  const teachers = [];
   for (let i = anchorIdx + 1; i < lessonRows.length; i++) {
     const row = lessonRows[i];
     const subjectValue = cleanValue(cell(row, subjectCol));
     const roomValue = cleanValue(cell(row, roomCol));
-    if (subjectValue && !isTeacherName(subjectValue)) {
-      if (normalizeSubject(subjectValue) === normalizeSubject(mainSubject)) {
-        subjectVariants.push([subjectValue, roomValue]);
-      }
-    } else if (subjectValue && isTeacherName(subjectValue)) {
-      teachers.push([subjectValue, roomValue]);
+    if (!subjectValue) continue;
+    if (isTeacherName(subjectValue)) {
+      seg.teachers.push([subjectValue, roomValue]);
+    } else {
+      seg = startSegment(subjectValue, roomValue);
     }
   }
-  if (!teachers.length) return [[mainSubject, mainRoom ? [mainRoom] : [], []]];
 
   const resultLessons = [];
-  if (subjectVariants.length > 1) {
-    for (let i = 0; i < subjectVariants.length; i++) {
-      const [subject, room] = subjectVariants[i];
-      if (i < teachers.length) {
-        const [teacher, teacherRoom] = teachers[i];
-        resultLessons.push([subject, [teacherRoom || room], [teacher]]);
-      }
+  segments.forEach((s) => {
+    if (!s.subject) return;
+    if (!s.teachers.length) {
+      resultLessons.push([s.subject, s.rooms, []]);
+      return;
     }
-    if (teachers.length > subjectVariants.length) {
-      const lastRoom = subjectVariants.length ? subjectVariants[subjectVariants.length - 1][1] : mainRoom;
-      for (let i = subjectVariants.length; i < teachers.length; i++) {
-        const [teacher, teacherRoom] = teachers[i];
-        resultLessons.push([mainSubject, [teacherRoom || lastRoom], [teacher]]);
-      }
-    }
-  } else {
-    let rooms = mainRoom ? [mainRoom] : [];
-    for (const [, teacherRoom] of teachers) {
-      if (teacherRoom && !rooms.includes(teacherRoom)) rooms.push(teacherRoom);
-    }
-    if (!rooms.length && mainRoom) rooms = [mainRoom];
-    for (let i = 0; i < teachers.length; i++) {
-      const [teacher, teacherRoom] = teachers[i];
-      let roomToUse;
-      if (teacherRoom) roomToUse = teacherRoom;
-      else if (i < rooms.length) roomToUse = rooms[i];
-      else roomToUse = rooms.length ? rooms[rooms.length - 1] : '';
-      resultLessons.push([mainSubject, [roomToUse], [teacher]]);
-    }
-  }
+    s.teachers.forEach(([teacher, teacherRoom], i) => {
+      const room = teacherRoom || s.rooms[i] || s.rooms[s.rooms.length - 1] || '';
+      resultLessons.push([s.subject, room ? [room] : [], [teacher]]);
+    });
+  });
   return resultLessons;
 }
-/* Если ячейка с номером урока объединена на несколько строк (типичная
-   разметка потоковых уроков), возвращает последнюю строку этого
-   объединения (0-индексация, как в SheetJS !merges). Если объединения
-   нет — возвращает саму rowIndex (блок из одной строки, как раньше). */
 function mergedRowSpanEnd(merges, colIndex, rowIndex) {
   if (!merges) return rowIndex;
   for (const m of merges) {
@@ -495,11 +437,6 @@ function mergedRowSpanEnd(merges, colIndex, rowIndex) {
 function processLessonBlock(rows, startRow, className, lessonNum, dayColumns, scheduleData, merges) {
   const lessonRows = [rows[startRow] || []];
   let currentRow = startRow + 1;
-  // Учитель часто стоит не сразу под предметом, а через одну-две полностью
-  // пустые строки-«распорки» (визуальное оформление внутри объединённой
-  // ячейки номера урока). Такие строки нельзя считать концом блока, пока
-  // мы не вышли за пределы объединения номера урока — иначе учитель на
-  // следующей строке молча теряется, а весь урок пропадает как «Окно».
   const mergedEnd = mergedRowSpanEnd(merges, 0, startRow);
   while (currentRow < rows.length) {
     const row = rows[currentRow] || [];
@@ -514,8 +451,6 @@ function processLessonBlock(rows, startRow, className, lessonNum, dayColumns, sc
     for (const [subject, rooms, teachers] of lessonsForDay) {
       if (!subject) continue;
       const canonicalSubject = normalizeSubject(subject);
-      // Если учителя не нашлось совсем — всё равно показываем сам урок
-      // (с пометкой «не указан»), а не молча теряем его целиком.
       const teacherList = teachers.length ? teachers : [''];
       teacherList.forEach((teacher, i) => {
         const teacherRoom = i < rooms.length ? rooms[i] : (rooms.length ? rooms[0] : '');
@@ -575,17 +510,6 @@ function parseRows(rows, merges) {
 /* =========================================================
    1б. ПАРСЕР ФОРМАТА «ПЕДАГОГИ»
    ========================================================= */
-/* В этом формате роли полей зеркально меняются по сравнению с форматом
-   «Классы»: блок озаглавлен ФИО педагога (а не классом), и в ячейке,
-   где раньше был просто предмет, теперь склеены класс и предмет через
-   дефис — например «9а-Труд», «8д-Инф-ка» (дефис внутри самого предмета,
-   как в «Инф-ка», не мешает — класс всегда отделяется по ПЕРВОМУ дефису).
-   Учитель в этом формате не пишется в каждой строке отдельно — он один
-   и тот же для всего блока, поэтому отдельного распознавания
-   учитель/предмет здесь не требуется. Нормализация названий предметов
-   (SUBJECT_CANON/normalizeSubject) используется точно так же, как и в
-   формате «Классы» — проблема разных сокращений одна и та же в обоих
-   форматах. */
 function isSoleCellHeader(row) {
   const v = cleanValue(cell(row, 0));
   if (!v) return false;
@@ -600,7 +524,7 @@ function parseClassSubject(rawValue) {
   const value = cleanValue(rawValue);
   if (!value) return null;
   const idx = value.indexOf('-');
-  if (idx <= 0) return null; // нет дефиса-разделителя, либо класс пустой — не наш формат ячейки
+  if (idx <= 0) return null;
   const classPart = value.slice(0, idx).trim();
   const subjectPart = value.slice(idx + 1).trim();
   if (!classPart || !subjectPart) return null;
@@ -629,7 +553,7 @@ function processTeacherLessonBlock(rows, startRow, teacherName, lessonNum, dayCo
     if (isSoleCellHeader(row) || extractLessonNumber(cell(row, 0)) !== null) break;
     const allEmpty = row.length === 0 || row.every(c => cleanValue(c) === '');
     if (allEmpty && currentRow > mergedEnd) break;
-    lessonRows.push(row); // строки-продолжения — параллельные группы у того же педагога в это же время
+    lessonRows.push(row);
     currentRow++;
   }
   for (const [day, cols] of Object.entries(dayColumns)) {
@@ -669,10 +593,7 @@ function parseTeacherRows(rows, merges) {
   return scheduleData;
 }
 
-/* ---------- Автоопределение формата файла ----------
-   Заголовок самого первого блока в файле — это либо название класса
-   («1а», «9б» — формат «Классы»), либо ФИО педагога (формат «Педагоги»).
-   По этому единственному признаку выбирается нужный парсер. */
+/* ---------- Автоопределение формата файла ----------*/
 function detectScheduleFormat(rows) {
   for (const row of rows) {
     if (isDaysHeader(row)) break; // дошли до первого блока, не встретив заголовок — формат не определить
@@ -694,74 +615,68 @@ let currentFileName = '';
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.6.0'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.6.2'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
-const LESSON_TIMES = {
-  1: '08:30-09:10', 2: '09:20-10:00', 3: '10:20-11:00', 4: '11:20-12:00', 5: '12:10-12:50',
-  6: '13:10-13:50', 7: '14:10-14:50', 8: '15:10-15:50', 9: '16:10-16:50', 10: '17:10-17:50'
+const LESSON_TIMES_GRADE1 = {
+  1: '08:30-09:05', 2: '09:25-10:00', 3: '10:20-10:55', 4: '12:10-12:45', 5: '13:10-13:45'
 };
-const timeText = num => LESSON_TIMES[num] || '';
+const LESSON_TIMES_DEFAULT = {
+  1: '08:30-09:10', 2: '09:20-10:00', 3: '10:20-11:00', 4: '11:20-12:00', 5: '12:10-12:50',
+  6: '13:10-13:50', 7: '14:10-14:50', 8: '15:10-15:50', 9: '16:00-16:40', 10: '16:50-17:30'
+};
+function getGradeNumber(className) {
+  const m = String(className || '').match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+function lessonTimesFor(className) {
+  return getGradeNumber(className) === 1 ? LESSON_TIMES_GRADE1 : LESSON_TIMES_DEFAULT;
+}
+function timeTextFor(className, num) {
+  return lessonTimesFor(className)[num] || '';
+}
+const timeText = num => LESSON_TIMES_DEFAULT[num] || '';
 
-/* ---------- Подсветка текущего/следующего урока ----------
-   Ориентируется на системные часы устройства — браузер не умеет отдельно
-   спрашивать «настоящее сетевое время», у него есть доступ только к
-   часам самого устройства (Date). На практике телефоны и компьютеры почти
-   всегда сами синхронизируют часы по сети, так что для этой задачи
-   разницы нет. */
+/* ---------- Подсветка текущего/следующего урока ----------*/
 function getTodayDayName() {
-  const idx = new Date().getDay(); // 0=вс,1=пн,...,6=сб
+  const idx = new Date().getDay();
   const map = { 1: 'понедельник', 2: 'вторник', 3: 'среда', 4: 'четверг', 5: 'пятница' };
-  return map[idx] || null; // на выходных подсвечивать нечего
+  return map[idx] || null;
 }
 function timeRangeToMinutes(rangeStr) {
   const [startStr, endStr] = rangeStr.split('-');
   const toMin = s => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
   return { start: toMin(startStr), end: toMin(endStr) };
 }
-function getCurrentAndNextLesson() {
-  const today = getTodayDayName();
-  if (!today) return { today: null, current: null, next: null };
-  const now = new Date();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const nums = Object.keys(LESSON_TIMES).map(Number).sort((a, b) => a - b);
-  let current = null, next = null;
-  for (const n of nums) {
-    const { start, end } = timeRangeToMinutes(LESSON_TIMES[n]);
-    if (nowMin >= start && nowMin < end) { current = n; break; }
-  }
-  if (current === null) {
-    for (const n of nums) {
-      const { start } = timeRangeToMinutes(LESSON_TIMES[n]);
-      if (nowMin < start) { next = n; break; }
-    }
-  }
-  return { today, current, next };
-}
-/* Снимает прошлую подсветку и расставляет новую по всем видимым карточкам
-   уроков сразу на всех вкладках (Учителя/Классы/Кабинеты) — вызывается и
-   после каждой перерисовки расписания, и по таймеру (см. bootApp), чтобы
-   подсветка сама переезжала на следующий урок без перезагрузки страницы. */
 function applyTimeHighlight() {
   document.querySelectorAll('.slot-current, .slot-next').forEach(el => {
     el.classList.remove('slot-current', 'slot-next');
   });
-  const { today, current, next } = getCurrentAndNextLesson();
+  const today = getTodayDayName();
   if (!today) return;
-  if (current !== null) {
-    document.querySelectorAll(`.slot[data-day="${today}"][data-lesson="${current}"]`).forEach(el => el.classList.add('slot-current'));
-  } else if (next !== null) {
-    document.querySelectorAll(`.slot[data-day="${today}"][data-lesson="${next}"]`).forEach(el => el.classList.add('slot-next'));
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  const todaySlots = Array.from(document.querySelectorAll(`.slot[data-day="${today}"]`)).filter(el => el.dataset.range);
+
+  let nextStart = Infinity;
+  todaySlots.forEach(el => {
+    const { start, end } = timeRangeToMinutes(el.dataset.range);
+    if (nowMin >= start && nowMin < end) {
+      el.classList.add('slot-current');
+    } else if (start > nowMin && start < nextStart) {
+      nextStart = start;
+    }
+  });
+  if (nextStart < Infinity) {
+    todaySlots.forEach(el => {
+      const { start } = timeRangeToMinutes(el.dataset.range);
+      if (start === nextStart) el.classList.add('slot-next');
+    });
   }
 }
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
 /* ---------- Светлая/тёмная тема ---------- */
-/* Хранится в localStorage (крошечное значение, как и избранное) и не
-   зависит от версии кэша — переживает обновления приложения. Применяется
-   через класс theme-dark на <body>, все цвета — CSS-переменные, поэтому
-   переключение не требует ничего перерисовывать. */
 const THEME_KEY = 'raspisanie547-theme';
 function getTheme() {
   try { return localStorage.getItem(THEME_KEY) || 'light'; }
@@ -786,23 +701,13 @@ function themeToggleButtonHtml() {
   return `<button class="btn secondary theme-toggle" type="button">${label}</button>`;
 }
 
-/* Оборачивает имя учителя/класса/кабинета в кликабельную ссылку — клик по
-   ней переключает на соответствующую вкладку и сразу открывает расписание
-   этого элемента (см. goTo() и делегированный обработчик кликов ниже).
-   Служебные значения вроде «не указан» или «?» ссылками не делаем. */
+/* Оборачивает имя учителя/класса/кабинета в кликабельную ссылку */
 function xlink(type, name, label) {
   const text = label !== undefined ? label : name;
   if (!name || name === '?' || name === 'не указан') return esc(text);
   return `<span class="xlink" data-type="${esc(type)}" data-name="${esc(name)}">${esc(text)}</span>`;
 }
 
-/* Номер версии приложения теперь хранится в одном месте — в CACHE_VERSION
-   внутри sw.js. Здесь мы просто читаем этот файл как обычный текст и
-   вытаскиваем значение регулярным выражением — благодаря этому не нужно
-   отдельно помнить о правке номера версии в самом index.html при каждом
-   обновлении: достаточно поменять его один раз в sw.js. Если sw.js
-   недоступен (например, файл открыт напрямую с диска, не через сайт) —
-   остаётся запасное значение APP_VERSION, заданное выше. */
 async function syncAppVersionFromServiceWorker() {
   try {
     const res = await fetch('sw.js', { cache: 'no-store' });
@@ -810,7 +715,6 @@ async function syncAppVersionFromServiceWorker() {
     const m = text.match(/const\s+CACHE_VERSION\s*=\s*['"]([^'"]+)['"]/);
     if (m) APP_VERSION = m[1];
   } catch (err) {
-    // офлайн или файл открыт не через сайт — остаёмся на запасном значении
   }
   document.title = `${APP_NAME} v${APP_VERSION}`;
 }
@@ -818,12 +722,6 @@ async function syncAppVersionFromServiceWorker() {
 /* =========================================================
    3а-1. АДМИНИСТРАТИВНАЯ ВКЛАДКА (скрытая проверка ошибок расписания)
    ========================================================= */
-/* Доступ скрыт намеренно — обычный пользователь не должен на неё
-   натыкаться случайно. Открывается одним и тем же жестом что на телефоне,
-   что на компьютере: 7 кликов/тапов подряд (в течение 3 секунд) по строке
-   «Загружен: …» в шапке приложения. Состояние («открыта» или нет) хранится
-   в localStorage, поэтому один раз обнаруженная вкладка остаётся видимой
-   и в следующих сессиях — как скрытые «Параметры разработчика» в Android. */
 const ADMIN_UNLOCK_KEY = 'raspisanie547-admin-unlocked';
 function isAdminUnlocked() {
   try { return localStorage.getItem(ADMIN_UNLOCK_KEY) === '1'; }
@@ -846,16 +744,6 @@ function registerSecretTap() {
   }
 }
 
-/* Поиск конфликтов в расписании. Работает одинаково для файлов обоих
-   форматов («Классы» и «Педагоги»), т.к. к этому моменту оба уже собраны
-   в одну и ту же структуру scheduleData — отдельной логики на формат не
-   требуется.
-   - Конфликт учителя: один и тот же педагог в один день и на один и тот
-     же номер урока числится в РАЗНЫХ классах одновременно.
-   - Конфликт кабинета: один и тот же кабинет в один день и на один и тот
-     же номер урока используется РАЗНЫМИ классами одновременно. Несколько
-     параллельных групп ОДНОГО класса в одном кабинете (например, две
-     группы физкультуры в одном зале) конфликтом не считаются. */
 function findScheduleConflicts() {
   function groupConflicts(entries) {
     const result = [];
@@ -891,7 +779,7 @@ function renderAdminTab() {
       const details = c.items.map(l =>
         `${xlink('class', l.class, l.class || '?')} — ${esc(l.subject || '?')} (${xlink('teacher', l.teacher, l.teacher || 'не указан')}, каб. ${xlink('room', l.room, l.room || '?')})`
       ).join('<br>');
-      html += `<div class="slot busy conflict"><div class="slot-row"><span class="slot-main"><b>${esc(c.who)}</b> — ${cap(c.day)}, ${c.lessonNum} урок</span><span class="slot-time">${esc(timeText(c.lessonNum))}</span></div><div class="lesson-sub">${details}</div></div>`;
+      html += `<div class="slot busy conflict"><div class="slot-row"><span class="slot-main"><b>${esc(c.who)}</b> — ${cap(c.day)}, ${c.lessonNum} урок</span><span class="slot-time">${esc(timeTextFor(c.items[0] && c.items[0].class, c.lessonNum))}</span></div><div class="lesson-sub">${details}</div></div>`;
     });
     return html;
   }
@@ -912,11 +800,6 @@ function renderAdminTab() {
 /* =========================================================
    3а0. ИЗБРАННОЕ + БЫСТРЫЕ ПЕРЕХОДЫ МЕЖДУ ВКЛАДКАМИ
    ========================================================= */
-/* Избранное — это просто список {type, name} (учитель/класс/кабинет),
-   хранится в localStorage: данные крошечные (строки), в отличие от самого
-   Excel-файла, для которого используется IndexedDB. Хранилище отдельное
-   и не зависит от версии кэша (CACHE_VERSION) — переживает любые
-   обновления приложения. */
 const FAVORITES_KEY = 'raspisanie547-favorites';
 const FAV_ICON = { teacher: '👨\u200d🏫', class: '👥', room: '🚪' };
 const FAV_TAB = { teacher: 'teachers', class: 'classes', room: 'rooms' };
@@ -936,7 +819,6 @@ function setFavorite(type, name, value) {
   catch (err) { console.warn('Не удалось сохранить избранное:', err); }
 }
 
-/* Лента избранного — всегда над вкладками (см. renderMain). */
 function renderFavoritesStrip() {
   const el = document.getElementById('favoritesStrip');
   if (!el) return;
@@ -950,15 +832,11 @@ function renderFavoritesStrip() {
   `).join('');
 }
 
-/* Переключает активную вкладку (та же логика, что и клик по кнопке вкладки —
-   вынесена в отдельную функцию, чтобы вызывать её и программно). */
 function activateTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tabId));
 }
 
-/* Переход к расписанию конкретного учителя/класса/кабинета — используется
-   и кликом по ссылке внутри расписания, и кликом по чипу избранного. */
 function goTo(type, name) {
   const tabId = FAV_TAB[type];
   const selectId = FAV_SELECT_ID[type];
@@ -968,8 +846,6 @@ function goTo(type, name) {
   if (!select) return;
   const hasOption = Array.from(select.options).some(o => o.value === name);
   if (!hasOption) {
-    // такого учителя/класса/кабинета нет в текущем файле (например, избранное
-    // осталось от расписания за прошлый период) — просто открываем вкладку
     return;
   }
   select.value = name;
@@ -977,9 +853,6 @@ function goTo(type, name) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/* Один делегированный обработчик на всё приложение — работает даже после
-   пересборки innerHTML вкладок (что происходит постоянно), т.к. навешан
-   на неизменный корневой контейнер, а не на конкретные элементы списков. */
 app.addEventListener('click', (e) => {
   const secretTap = e.target.closest('.secret-tap');
   if (secretTap) { registerSecretTap(); return; }
@@ -1012,13 +885,6 @@ app.addEventListener('click', (e) => {
 /* =========================================================
    3а. ПАМЯТЬ О ПОСЛЕДНЕМ ФАЙЛЕ (IndexedDB)
    ========================================================= */
-/* Расписание меняется редко, поэтому имеет смысл запоминать последний
-   загруженный Excel-файл целиком (сами байты, а не разобранные данные) —
-   при следующем запуске файл просто заново проходит через тот же парсер.
-   Хранится через IndexedDB (а не localStorage), т.к. файл — это бинарные
-   данные, и localStorage для такого не предназначен и заметно меньше по
-   лимиту. Если IndexedDB недоступен (приватный режим, старый браузер) —
-   приложение просто ведёт себя как раньше, без запоминания. */
 const LAST_FILE_DB = 'raspisanie547-db';
 const LAST_FILE_STORE = 'files';
 const LAST_FILE_KEY = 'lastFile';
@@ -1068,7 +934,7 @@ async function clearLastFile() {
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
-  } catch (err) { /* тихо игнорируем — нечего чистить или хранилище недоступно */ }
+  } catch (err) { }
 }
 
 /* =========================================================
@@ -1141,16 +1007,10 @@ function renderInitialWithSavedFile(saved) {
   });
 }
 
-/* Общая логика разбора книги — используется и при выборе нового файла,
-   и при повторном открытии сохранённого (без повторного чтения с диска). */
 function loadScheduleFromArrayBuffer(arrayBuffer, fileName) {
-  // Отключаем разбор того, что приложению не нужно (формулы, оформление,
-  // rich-text, VBA-макросы, метаданные книги) — на слабых Android-устройствах
-  // с маленьким лимитом памяти WebView это заметно снижает пиковое
-  // потребление памяти при чтении файла.
   const wb = XLSX.read(arrayBuffer, {
     type: 'array',
-    dense: true,        // компактное хранение ячеек вместо объекта со множеством ключей
+    dense: true,
     cellFormula: false,
     cellHTML: false,
     cellStyles: false,
@@ -1164,25 +1024,19 @@ function loadScheduleFromArrayBuffer(arrayBuffer, fileName) {
   });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
-  // Объединённые ячейки (например, номер урока на 4 строки при потоковом
-  // делении) нужны парсеру, чтобы верно определять границы блока урока —
-  // см. mergedRowSpanEnd() и комментарий в processLessonBlock().
   const merges = sheet['!merges'] || [];
   scheduleData = parseSchedule(rows, merges);
   currentFileName = fileName;
   console.log('Найдено классов:', Object.keys(scheduleData.classes).length);
   renderMain();
 }
-
-/* Общая обработка файла — используется и при выборе через кнопку,
-   и при перетаскивании файла в окно (см. setupDragAndDrop). */
 function handleIncomingFile(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = (evt) => {
     try {
       loadScheduleFromArrayBuffer(evt.target.result, file.name);
-      saveLastFile(file.name, evt.target.result); // фоново запоминаем для следующего запуска
+      saveLastFile(file.name, evt.target.result);
     } catch (err) {
       console.error(err);
       renderInitial('Ошибка: ' + err.message, 'error');
@@ -1195,12 +1049,9 @@ function onFileSelected(e) {
   handleIncomingFile(e.target.files[0]);
 }
 
-/* ---------- Drag-and-drop ----------
-   Работает на всё окно приложения, независимо от того, какой экран сейчас
-   показан (начальный или основной) — файл можно перетащить в любой момент,
-   он заменит текущее расписание, как и обычная загрузка через кнопку. */
+/* ---------- Drag-and-drop ----------*/
 function setupDragAndDrop() {
-  let dragDepth = 0; // счётчик вложенных dragenter/dragleave — иначе overlay мигает при заходе на дочерние элементы
+  let dragDepth = 0;
   const overlay = document.createElement('div');
   overlay.id = 'dropOverlay';
   overlay.className = 'drop-overlay';
@@ -1217,7 +1068,7 @@ function setupDragAndDrop() {
   });
   window.addEventListener('dragover', (e) => {
     if (!isFileDrag(e)) return;
-    e.preventDefault(); // обязательно, иначе браузер откроет файл вместо drop-события
+    e.preventDefault();
   });
   window.addEventListener('dragleave', (e) => {
     if (!isFileDrag(e)) return;
@@ -1329,9 +1180,9 @@ function renderTeachersTab() {
         for (let num = 1; num <= dayMax; num++) {
           const l = byNum[num];
           if (l) {
-            html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${xlink('class', l.class, l.class||'?')} - ${esc(l.subject||'?')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+            html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(l.class, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${xlink('class', l.class, l.class||'?')} - ${esc(l.subject||'?')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeTextFor(l.class, num))}</span></div></div>`;
           } else {
-            html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+            html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeText(num))}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
           }
         }
       });
@@ -1380,7 +1231,7 @@ function renderClassesTab() {
       for (let num = 1; num <= dayMax; num++) {
         const lessons = dayLessons[num];
         if (!lessons || !lessons.length) {
-          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeTextFor(className, num))}</span></div></div>`;
           continue;
         }
         const bySubject = {};
@@ -1388,16 +1239,8 @@ function renderClassesTab() {
         const subjectEntries = Object.entries(bySubject);
         if (subjectEntries.length === 1 && subjectEntries[0][1].length === 1) {
           const l = subjectEntries[0][1][0];
-          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeTextFor(className, num))}</span></div></div>`;
         } else {
-          // Поток делится на несколько групп — все группы рисуются ВНУТРИ
-          // одного цветного блока урока, а не рядом с ним (раньше уходили
-          // за его границы и выглядели оторванными от заголовка урока).
-          // Название предмета всегда стоит рядом с номером урока на одной
-          // строке — если предмет для всех групп один и тот же, ниже просто
-          // список «педагог (кабинет)» без повторения названия; если группы
-          // занимаются разными предметами — название повторяется у каждой
-          // строки, чтобы было понятно, какой педагог что ведёт.
           const sameSubjectForAll = subjectEntries.length === 1;
           const headerText = sameSubjectForAll
             ? subjectEntries[0][0]
@@ -1413,7 +1256,7 @@ function renderClassesTab() {
               groupsHtml += `<div class="lesson-sub">${prefix}${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</div>`;
             }
           });
-          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(headerText)}</span><span class="slot-time">${esc(timeText(num))}</span></div>${groupsHtml}</div>`;
+          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(headerText)}</span><span class="slot-time">${esc(timeTextFor(className, num))}</span></div>${groupsHtml}</div>`;
         }
       }
     });
@@ -1438,7 +1281,6 @@ function renderClassesTab() {
   });
 }
 
-/* Портировано из schedule_exporter.py: PIL -> Canvas */
 function exportClassScheduleToImage(className, schedule) {
   const dayCellWidth = 220, lessonCellWidth = 60, cellHeight = 90, headerHeight = 70, margin = 30;
 
@@ -1616,19 +1458,14 @@ function renderRoomsTab() {
       for (let num = 1; num <= dayMax; num++) {
         if (byNum[num]) {
           const l = byNum[num];
-          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(l.class, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})</span><span class="slot-time">${esc(timeTextFor(l.class, num))}</span></div></div>`;
         } else {
-          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeText(num))}"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
         }
       }
     });
 
-    // Свободные уроки считаем от реальной длины учебного дня (10 уроков —
-    // столько же строк в таблице времени LESSON_TIMES), а не от того, до
-    // какого номера урока этот конкретный кабинет случайно использовался —
-    // иначе кабинет, занятый только по 3-й урок каждый день, показывал бы
-    // "0 свободных", хотя на деле свободен с 4-го по 10-й все дни.
-    const LESSONS_PER_DAY = Object.keys(LESSON_TIMES).length;
+    const LESSONS_PER_DAY = Object.keys(LESSON_TIMES_DEFAULT).length;
     const totalLessons = roomLessons.length;
     const freeLessons = LESSONS_PER_DAY * dayOrder.length - totalLessons;
     html += `<div class="room-stats">Статистика: занято уроков — ${totalLessons}, свободно — ${freeLessons}</div>`;
@@ -1727,7 +1564,7 @@ function renderTeacherSearchTab() {
 
         html += `
           <div class="slot busy">
-            <div style="font-weight:700">${esc(teacher)}</div>
+            <div style="font-weight:700">${xlink('teacher', teacher, teacher)}</div>
             <div style="font-size:12.5px">• Уроков сегодня: ${lessonsToday}</div>
             <div style="font-size:12.5px">• Уроков за неделю: ${totalLessons}</div>
             <div style="font-size:12.5px">• Классы: ${classes.length ? esc(classes.join(', ')) : 'нет уроков'}</div>
@@ -1796,7 +1633,7 @@ function renderRoomSearchTab() {
 
         html += `
           <div class="slot busy">
-            <div style="font-weight:700">Кабинет ${esc(room)}</div>
+            <div style="font-weight:700">Кабинет ${xlink('room', room, room)}</div>
             <div style="font-size:12.5px">• Классы: ${classes.length ? esc(classes.join(', ')) : 'не используется'}</div>
             <div style="font-size:12.5px">• Предметы: ${subjects.length ? esc(subjects.join(', ')) : 'нет предметов'}</div>
             <div style="font-size:12.5px">• Учителя: ${teachers.length ? esc(teachers.join(', ')) : 'учителя не указаны'}</div>
@@ -1816,10 +1653,10 @@ function renderRoomSearchTab() {
 (async function bootApp() {
   applyTheme(getTheme());
   setupDragAndDrop();
-  setInterval(applyTimeHighlight, 60 * 1000); // подсветка сама сдвигается на следующий урок без перезагрузки
+  setInterval(applyTimeHighlight, 60 * 1000);
   await syncAppVersionFromServiceWorker();
   let saved = null;
-  try { saved = await loadLastFile(); } catch (err) { /* без сохранённого файла — обычный запуск */ }
+  try { saved = await loadLastFile(); } catch (err) {}
   if (saved && saved.buffer) {
     renderInitialWithSavedFile(saved);
   } else {
@@ -1827,19 +1664,8 @@ function renderRoomSearchTab() {
   }
 })();
 
-/* Регистрация service worker'а — даёт офлайн-работу и возможность
-   установить приложение на Android («Добавить на главный экран»).
-   Работает только при открытии по https:// или localhost — если файл
-   открыт напрямую (file://), эта часть просто ничего не делает и не
-   мешает обычной работе приложения в браузере на компьютере. */
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', () => {
-    // Если на странице уже ЕСТЬ активный service worker — значит, это не
-    // самая первая установка, а повторный визит. В этом случае, если
-    // браузер найдёт и активирует более новую версию service worker'а,
-    // страницу нужно перезагрузить один раз, чтобы новый код вступил в
-    // силу сразу — иначе открытая вкладка молча продолжит работать
-    // по старому коду до ручного закрытия и повторного открытия.
     const hadControllerBefore = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register('sw.js').then((registration) => {
       if (hadControllerBefore) {
@@ -1851,20 +1677,10 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
         });
       }
       const checkForUpdate = () => registration.update().catch(() => {});
-
-      // Проверяем сразу при открытии...
       checkForUpdate();
-
-      // ...и каждый раз, когда приложение возвращается на передний план —
-      // это главный случай: открытие иконки уже установленного PWA часто
-      // просто «будит» существующую вкладку в фоне, а не загружает страницу
-      // заново, поэтому обычная проверка при загрузке страницы не сработает.
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') checkForUpdate();
       });
-
-      // На случай, если приложение остаётся открытым подолгу без сворачивания —
-      // дополнительно проверяем раз в час.
       setInterval(checkForUpdate, 60 * 60 * 1000);
     }).catch((err) => {
       console.warn('Не удалось зарегистрировать service worker:', err);
