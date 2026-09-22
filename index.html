@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.6.2</title>
+<title>Расписание547 v1.7.0</title>
 
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1a56db">
@@ -108,7 +108,7 @@
   }
   .btn.secondary:hover{background:var(--accent-soft);}
 
-  select, input[type=file]{
+  select, input[type=file], input[type=text]{
     font:inherit;
     padding:9px 12px;
     border-radius:8px;
@@ -117,6 +117,32 @@
     color:var(--ink);
   }
   select{min-width:220px;}
+  input[type=text]{width:100%;}
+
+  .modal-overlay{
+    position:fixed;inset:0;z-index:900;
+    display:flex;align-items:flex-start;justify-content:center;
+    background:rgba(0,0,0,.35);
+    padding:30px 14px;overflow-y:auto;
+    opacity:0;pointer-events:none;
+    transition:opacity .12s ease;
+  }
+  .modal-overlay.active{opacity:1;pointer-events:auto;}
+  .modal-box{
+    background:var(--panel);border-radius:14px;padding:22px 22px 18px;
+    max-width:480px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25);
+  }
+  .modal-title{font-size:18px;font-weight:700;margin-bottom:12px;}
+  .field-row{margin-bottom:12px;}
+  .field-row label{display:block;font-size:13px;font-weight:600;margin-bottom:4px;}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:14px;}
+
+  .add-slot-btn{cursor:pointer;margin-left:6px;opacity:.6;}
+  .add-slot-btn:hover{opacity:1;}
+  .del-manual-btn{cursor:pointer;margin-left:6px;opacity:.55;font-size:12.5px;}
+  .del-manual-btn:hover{opacity:1;}
+  .manual-badge{font-size:11px;margin-left:4px;}
+  .slot.manual{border-style:dashed;border-color:var(--gold);}
 
   .sticky-header{
     position:sticky;
@@ -610,12 +636,302 @@ function parseSchedule(rows, merges) {
 /* =========================================================
    2. СОСТОЯНИЕ + УТИЛИТЫ
    ========================================================= */
+let parsedScheduleData = createScheduleData();
 let scheduleData = createScheduleData();
+let manualEntries = [];
 let currentFileName = '';
+
+/* =========================================================
+   3а-2. РУЧНЫЕ ДОПОЛНЕНИЯ К РАСПИСАНИЮ
+   ========================================================= */
+/* Расписание из Excel — источник истины, но им можно вручную дополнить
+   отдельные занятия (внеурочная деятельность, надомное обучение и т.п.),
+   не трогая сам файл. Ручные записи хранятся ОТДЕЛЬНО (manualEntries) и
+   каждый раз заново «вмешиваются» в свежую копию распарсенных данных —
+   поэтому удаление ручной записи не требует «отмены» ничего: просто
+   пересобираем эффективное расписание с нуля из parsedScheduleData
+   + оставшихся manualEntries. */
+function cloneScheduleData(sd) {
+  return typeof structuredClone === 'function' ? structuredClone(sd) : JSON.parse(JSON.stringify(sd));
+}
+function genManualId() {
+  return 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+/* Запись с номером урока встраивается в обычную нумерованную сетку (наравне
+   с настоящими уроками из Excel) — так она попадает в тот же цикл
+   рендера 1..dayMax, что и всё остальное. Запись со своим временем
+   (customTime, без номера урока) в общую сетку НЕ встраивается — её
+   негде разместить среди пронумерованных уроков — и рендерится отдельным
+   блоком в конце дня (см. customEntriesFor()/renderCustomEntrySlot()). */
+function injectManualEntry(sd, entry) {
+  if (!entry.lessonNum) return;
+  const lessonData = {
+    subject: entry.subject || 'Ручное занятие',
+    room: entry.room || '',
+    teacher: entry.teacher || '',
+    class: entry.class || '',
+    lesson_num: entry.lessonNum,
+    day: entry.day,
+    manual: true,
+    manualId: entry.id
+  };
+  if (entry.class) {
+    if (!sd.classes[entry.class]) { sd.classes[entry.class] = {}; DAYS.forEach(d => { sd.classes[entry.class][d] = {}; }); }
+    if (!sd.classes[entry.class][entry.day]) sd.classes[entry.class][entry.day] = {};
+    (sd.classes[entry.class][entry.day][entry.lessonNum] ??= []).push(lessonData);
+  }
+  if (entry.teacher) (sd.teachers[entry.teacher] ??= []).push(lessonData);
+  if (entry.room) (sd.rooms[entry.room] ??= []).push(lessonData);
+  if (lessonData.subject) (sd.subjects[lessonData.subject] ??= []).push(lessonData);
+}
+function rebuildScheduleData() {
+  const merged = cloneScheduleData(parsedScheduleData);
+  manualEntries.forEach(entry => injectManualEntry(merged, entry));
+  scheduleData = merged;
+}
+/* Записи со своим временем для конкретного дня и контекста (учитель/класс/
+   кабинет) — рендерятся отдельным блоком, см. использование в вкладках. */
+function customEntriesFor(day, ctxType, ctxValue) {
+  if (!ctxValue) return [];
+  return manualEntries
+    .filter(e => e.customTime && e.day === day && e[ctxType] === ctxValue)
+    .sort((a, b) => a.customTime.localeCompare(b.customTime));
+}
+function manualControls(l) {
+  if (!l || !l.manual) return '';
+  return ` <span class="manual-badge" title="Ручное дополнение">✏️</span><span class="del-manual-btn" data-manual-id="${esc(l.manualId)}" title="Удалить">🗑</span>`;
+}
+function renderCustomEntrySlot(e, ctxType) {
+  const parts = [];
+  if (ctxType !== 'class' && e.class) parts.push(xlink('class', e.class, e.class));
+  parts.push(esc(e.subject || '?'));
+  if (ctxType !== 'teacher' && e.teacher) parts.push(xlink('teacher', e.teacher, e.teacher));
+  if (ctxType !== 'room' && e.room) parts.push('каб. ' + xlink('room', e.room, e.room));
+  return `<div class="slot busy manual" data-day="${esc(e.day)}" data-range="${esc(e.customTime)}">
+    <div class="slot-row"><span class="slot-main">Доп. занятие: ${parts.join(' — ')}${manualControls({ manual: true, manualId: e.id })}</span><span class="slot-time">${esc(e.customTime)}</span></div>
+    ${e.note ? `<div class="lesson-sub">${esc(e.note)}</div>` : ''}
+  </div>`;
+}
+function deleteManualEntry(id) {
+  if (!confirm('Удалить это ручное занятие?')) return;
+  manualEntries = manualEntries.filter(e => e.id !== id);
+  saveManualEntries();
+  rebuildScheduleData();
+  renderManualModal();
+  renderMain();
+}
+
+/* ---------- Модальное окно управления ручными дополнениями ---------- */
+let manualModalMode = 'list'; // 'list' | 'form'
+let manualFormPrefill = null;
+
+function setupManualEntriesUI() {
+  const overlay = document.createElement('div');
+  overlay.id = 'manualModalOverlay';
+  overlay.className = 'modal-overlay';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeManualModal(); // клик по тёмному фону — закрыть
+  });
+}
+function openManualPanel(prefill) {
+  manualModalMode = prefill ? 'form' : 'list';
+  manualFormPrefill = prefill || null;
+  renderManualModal();
+  document.getElementById('manualModalOverlay').classList.add('active');
+}
+function closeManualModal() {
+  const el = document.getElementById('manualModalOverlay');
+  if (el) el.classList.remove('active');
+}
+function renderManualModal() {
+  const el = document.getElementById('manualModalOverlay');
+  if (!el) return;
+  el.innerHTML = manualModalMode === 'form' ? renderManualForm(manualFormPrefill) : renderManualList();
+  wireManualModalEvents();
+}
+function renderManualForm(prefill) {
+  const p = prefill || {};
+  const teachers = Object.keys(scheduleData.teachers).filter(Boolean).sort();
+  const classes = Object.keys(scheduleData.classes).sort();
+  const rooms = Object.keys(scheduleData.rooms).filter(Boolean).sort();
+  const isCustom = !!p.customTime;
+  return `
+    <div class="modal-box">
+      <div class="modal-title">➕ Ручное занятие</div>
+      <div class="field-row">
+        <label>День недели</label>
+        <select id="mfDay">${dayOrder.map(d => `<option value="${esc(d)}" ${p.day === d ? 'selected' : ''}>${cap(d)}</option>`).join('')}</select>
+      </div>
+      <div class="field-row">
+        <label>Время</label>
+        <div style="display:flex;gap:16px;margin-bottom:8px;font-size:13.5px">
+          <label style="font-weight:400;display:flex;align-items:center;gap:5px"><input type="radio" name="mfTimeMode" value="lesson" ${isCustom ? '' : 'checked'}> Номер урока</label>
+          <label style="font-weight:400;display:flex;align-items:center;gap:5px"><input type="radio" name="mfTimeMode" value="custom" ${isCustom ? 'checked' : ''}> Своё время</label>
+        </div>
+        <select id="mfLessonNum" style="${isCustom ? 'display:none' : ''}">${[1,2,3,4,5,6,7,8,9,10].map(n => `<option value="${n}" ${p.lessonNum === n ? 'selected' : ''}>${n} урок</option>`).join('')}</select>
+        <input type="text" id="mfCustomTime" placeholder="например, 15:00-15:40" value="${esc(p.customTime || '')}" style="${isCustom ? '' : 'display:none'}">
+      </div>
+      <div class="field-row">
+        <label>Предмет / название занятия *</label>
+        <input type="text" id="mfSubject" placeholder="например, Внеурочная деятельность" value="${esc(p.subject || '')}">
+      </div>
+      <div class="field-row">
+        <label>Учитель</label>
+        <input type="text" id="mfTeacher" list="mfTeacherList" placeholder="ФИО учителя" value="${esc(p.teacher || '')}">
+        <datalist id="mfTeacherList">${teachers.map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+      </div>
+      <div class="field-row">
+        <label>Класс (необязательно)</label>
+        <input type="text" id="mfClass" list="mfClassList" placeholder="например, 5б" value="${esc(p.class || '')}">
+        <datalist id="mfClassList">${classes.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+      </div>
+      <div class="field-row">
+        <label>Кабинет (необязательно)</label>
+        <input type="text" id="mfRoom" list="mfRoomList" placeholder="например, 210" value="${esc(p.room || '')}">
+        <datalist id="mfRoomList">${rooms.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
+      </div>
+      <div class="field-row">
+        <label>Примечание (необязательно)</label>
+        <input type="text" id="mfNote" placeholder="например, ученик на надомном обучении" value="${esc(p.note || '')}">
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" type="button" id="mfCancelBtn">Отмена</button>
+        <button class="btn" type="button" id="mfSaveBtn">💾 Сохранить</button>
+      </div>
+    </div>
+  `;
+}
+function renderManualList() {
+  const rows = manualEntries.slice().sort((a, b) =>
+    dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day) ||
+    (a.lessonNum || 99) - (b.lessonNum || 99) ||
+    (a.customTime || '').localeCompare(b.customTime || '')
+  );
+  const itemsHtml = rows.length ? rows.map(e => `
+    <div class="slot busy manual">
+      <div class="slot-row">
+        <span class="slot-main">${cap(e.day)}, ${e.customTime ? esc(e.customTime) : e.lessonNum + ' урок'}: ${esc(e.subject)}${e.teacher ? ' — ' + esc(e.teacher) : ''}${e.class ? ' (' + esc(e.class) + ')' : ''}${e.room ? ', каб. ' + esc(e.room) : ''}</span>
+        <span class="del-manual-btn" data-manual-id="${esc(e.id)}" title="Удалить">🗑</span>
+      </div>
+      ${e.note ? `<div class="lesson-sub">${esc(e.note)}</div>` : ''}
+    </div>
+  `).join('') : `<div class="empty">Пока нет ручных дополнений</div>`;
+
+  return `
+    <div class="modal-box">
+      <div class="modal-title">✏️ Ручные дополнения (${manualEntries.length})</div>
+      <p style="font-size:12.5px;color:var(--muted);margin:-4px 0 12px">
+        Добавляются кнопкой «➕» на свободных уроках («Окно») в расписании или через кнопку ниже.
+        Хранятся отдельно от файла расписания и сохраняются автоматически на этом устройстве.
+      </p>
+      <div class="modal-actions" style="justify-content:flex-start;margin-bottom:12px">
+        <button class="btn" type="button" id="mAddBtn">➕ Добавить занятие</button>
+        <button class="btn secondary" type="button" id="mExportBtn">⬇ Экспорт</button>
+        <label class="btn secondary" for="mImportInput">⬆ Импорт</label>
+        <input type="file" id="mImportInput" accept=".json" style="display:none">
+      </div>
+      <div class="schedule-list" style="max-height:50vh;overflow-y:auto">${itemsHtml}</div>
+      <div class="modal-actions">
+        <button class="btn secondary" type="button" id="mCloseBtn">Закрыть</button>
+      </div>
+    </div>
+  `;
+}
+function wireManualModalEvents() {
+  if (manualModalMode === 'form') {
+    const lessonSel = document.getElementById('mfLessonNum');
+    const customInp = document.getElementById('mfCustomTime');
+    document.querySelectorAll('input[name="mfTimeMode"]').forEach(r => r.addEventListener('change', () => {
+      const isCustom = document.querySelector('input[name="mfTimeMode"]:checked').value === 'custom';
+      lessonSel.style.display = isCustom ? 'none' : '';
+      customInp.style.display = isCustom ? '' : 'none';
+    }));
+    document.getElementById('mfCancelBtn').addEventListener('click', () => { manualModalMode = 'list'; renderManualModal(); });
+    document.getElementById('mfSaveBtn').addEventListener('click', submitManualForm);
+  } else {
+    document.getElementById('mAddBtn').addEventListener('click', () => { manualModalMode = 'form'; manualFormPrefill = null; renderManualModal(); });
+    document.getElementById('mExportBtn').addEventListener('click', exportManualEntries);
+    document.getElementById('mImportInput').addEventListener('change', importManualEntriesFile);
+    document.getElementById('mCloseBtn').addEventListener('click', closeManualModal);
+    document.querySelectorAll('#manualModalOverlay .del-manual-btn').forEach(btn => {
+      btn.addEventListener('click', () => deleteManualEntry(btn.dataset.manualId));
+    });
+  }
+}
+function submitManualForm() {
+  const day = document.getElementById('mfDay').value;
+  const isCustom = document.querySelector('input[name="mfTimeMode"]:checked').value === 'custom';
+  const subject = document.getElementById('mfSubject').value.trim();
+  const teacher = document.getElementById('mfTeacher').value.trim();
+  const cls = document.getElementById('mfClass').value.trim();
+  const room = document.getElementById('mfRoom').value.trim();
+  const note = document.getElementById('mfNote').value.trim();
+
+  if (!subject) { alert('Укажите предмет или название занятия'); return; }
+
+  let lessonNum = null, customTime = '';
+  if (isCustom) {
+    customTime = document.getElementById('mfCustomTime').value.trim();
+    if (!/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(customTime)) {
+      alert('Введите время в формате ЧЧ:ММ-ЧЧ:ММ, например 15:00-15:40');
+      return;
+    }
+  } else {
+    lessonNum = Number(document.getElementById('mfLessonNum').value);
+  }
+  if (!teacher && !cls && !room) {
+    if (!confirm('Не указаны ни учитель, ни класс, ни кабинет — занятие не будет видно ни в одной вкладке расписания. Всё равно сохранить?')) return;
+  }
+
+  manualEntries.push({ id: genManualId(), day, lessonNum, customTime, subject, teacher, class: cls, room, note });
+  saveManualEntries();
+  rebuildScheduleData();
+  manualModalMode = 'list';
+  renderManualModal();
+  renderMain();
+}
+function exportManualEntries() {
+  const payload = { app: 'raspisanie547-manual', version: 1, exportedAt: new Date().toISOString(), entries: manualEntries };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'raspisanie547-ручные-дополнения.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function importManualEntriesFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    try {
+      const data = JSON.parse(evt.target.result);
+      const entries = Array.isArray(data) ? data : (Array.isArray(data.entries) ? data.entries : null);
+      if (!entries) throw new Error('не найден список записей в файле');
+      const valid = entries.filter(x => x && typeof x === 'object' && x.day && x.subject);
+      if (!valid.length) throw new Error('в файле нет ни одной корректной записи');
+      valid.forEach(v => { if (!v.id) v.id = genManualId(); });
+      const replace = confirm(`Найдено записей: ${valid.length}. ОК — заменить текущие ручные дополнения (сейчас их ${manualEntries.length}) импортированными. Отмена — добавить их к текущим.`);
+      manualEntries = replace ? valid : manualEntries.concat(valid);
+      saveManualEntries();
+      rebuildScheduleData();
+      renderManualModal();
+      renderMain();
+    } catch (err) {
+      alert('Не удалось прочитать файл: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.6.2'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.7.0'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES_GRADE1 = {
@@ -880,6 +1196,19 @@ app.addEventListener('click', (e) => {
     renderFavoritesStrip();
     return;
   }
+
+  const addSlot = e.target.closest('.add-slot-btn');
+  if (addSlot) {
+    const prefill = { day: addSlot.dataset.day, lessonNum: Number(addSlot.dataset.lesson) };
+    const ctxType = addSlot.dataset.ctxType, ctxValue = addSlot.dataset.ctxValue;
+    if (ctxType && ctxValue) prefill[ctxType] = ctxValue;
+    openManualPanel(prefill);
+    return;
+  }
+  const delManual = e.target.closest('.del-manual-btn');
+  if (delManual) { deleteManualEntry(delManual.dataset.manualId); return; }
+  const manualBtn = e.target.closest('.manual-entries-btn');
+  if (manualBtn) { openManualPanel(null); return; }
 });
 
 /* =========================================================
@@ -888,19 +1217,26 @@ app.addEventListener('click', (e) => {
 const LAST_FILE_DB = 'raspisanie547-db';
 const LAST_FILE_STORE = 'files';
 const LAST_FILE_KEY = 'lastFile';
+const MANUAL_STORE = 'manual';
+const MANUAL_KEY = 'entries';
+const APP_DB_VERSION = 2;
 
-function openLastFileDB() {
+function openAppDB() {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) { reject(new Error('IndexedDB недоступен в этом браузере')); return; }
-    const req = indexedDB.open(LAST_FILE_DB, 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(LAST_FILE_STORE); };
+    const req = indexedDB.open(LAST_FILE_DB, APP_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(LAST_FILE_STORE)) db.createObjectStore(LAST_FILE_STORE);
+      if (!db.objectStoreNames.contains(MANUAL_STORE)) db.createObjectStore(MANUAL_STORE);
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
 }
 async function saveLastFile(fileName, arrayBuffer) {
   try {
-    const db = await openLastFileDB();
+    const db = await openAppDB();
     await new Promise((resolve, reject) => {
       const tx = db.transaction(LAST_FILE_STORE, 'readwrite');
       tx.objectStore(LAST_FILE_STORE).put({ fileName, buffer: arrayBuffer, savedAt: Date.now() }, LAST_FILE_KEY);
@@ -913,7 +1249,7 @@ async function saveLastFile(fileName, arrayBuffer) {
 }
 async function loadLastFile() {
   try {
-    const db = await openLastFileDB();
+    const db = await openAppDB();
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(LAST_FILE_STORE, 'readonly');
       const req = tx.objectStore(LAST_FILE_STORE).get(LAST_FILE_KEY);
@@ -927,7 +1263,7 @@ async function loadLastFile() {
 }
 async function clearLastFile() {
   try {
-    const db = await openLastFileDB();
+    const db = await openAppDB();
     await new Promise((resolve, reject) => {
       const tx = db.transaction(LAST_FILE_STORE, 'readwrite');
       tx.objectStore(LAST_FILE_STORE).delete(LAST_FILE_KEY);
@@ -935,6 +1271,36 @@ async function clearLastFile() {
       tx.onerror = () => reject(tx.error);
     });
   } catch (err) { }
+}
+/* Ручные дополнения — отдельный store той же базы. Хранится единым списком
+   под одним ключом (как избранное) — записей всегда немного, весь список
+   целиком перезаписывается при каждом изменении. */
+async function saveManualEntries() {
+  try {
+    const db = await openAppDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(MANUAL_STORE, 'readwrite');
+      tx.objectStore(MANUAL_STORE).put(manualEntries, MANUAL_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('Не удалось сохранить ручные дополнения:', err);
+  }
+}
+async function loadManualEntries() {
+  try {
+    const db = await openAppDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(MANUAL_STORE, 'readonly');
+      const req = tx.objectStore(MANUAL_STORE).get(MANUAL_KEY);
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('Не удалось прочитать ручные дополнения:', err);
+    return [];
+  }
 }
 
 /* =========================================================
@@ -1025,8 +1391,9 @@ function loadScheduleFromArrayBuffer(arrayBuffer, fileName) {
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
   const merges = sheet['!merges'] || [];
-  scheduleData = parseSchedule(rows, merges);
+  parsedScheduleData = parseSchedule(rows, merges);
   currentFileName = fileName;
+  rebuildScheduleData();
   console.log('Найдено классов:', Object.keys(scheduleData.classes).length);
   renderMain();
 }
@@ -1101,6 +1468,7 @@ function renderMain() {
         <label class="btn secondary" for="fileInput2">📁 Загрузить файл Excel</label>
         <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none">
         <div class="status ok secret-tap" title="">Загружен: ${esc(currentFileName)}</div>
+        <button class="btn secondary manual-entries-btn" type="button">✏️ Ручные${manualEntries.length ? ' (' + manualEntries.length + ')' : ''}</button>
         ${themeToggleButtonHtml()}
       </div>
       <div class="stats" id="stats"></div>
@@ -1167,24 +1535,29 @@ function renderTeachersTab() {
     const lessons = scheduleData.teachers[teacher] || [];
     const starIcon = isFavorite('teacher', teacher) ? '★' : '☆';
     let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание: ${esc(teacher)}<span class="fav-toggle" data-type="teacher" data-name="${esc(teacher)}" title="Добавить/убрать из избранного">${starIcon}</span></div>`;
-    if (!lessons.length) { html += `<div class="empty">У учителя нет уроков</div>`; }
+
+    const byDay = {};
+    lessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
+    const daysWithContent = dayOrder.filter(day => (byDay[day] && byDay[day].length) || customEntriesFor(day, 'teacher', teacher).length);
+
+    if (!daysWithContent.length) { html += `<div class="empty">У учителя нет уроков</div>`; }
     else {
-      const byDay = {};
-      lessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
-      dayOrder.forEach(day => {
-        if (!byDay[day] || !byDay[day].length) return;
-        const byNum = {};
-        byDay[day].forEach(l => { byNum[l.lesson_num || 0] = l; });
-        const dayMax = Math.max(...byDay[day].map(l => l.lesson_num || 0));
+      daysWithContent.forEach(day => {
         html += `<div class="day-title">${cap(day)}:</div>`;
-        for (let num = 1; num <= dayMax; num++) {
-          const l = byNum[num];
-          if (l) {
-            html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(l.class, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${xlink('class', l.class, l.class||'?')} - ${esc(l.subject||'?')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeTextFor(l.class, num))}</span></div></div>`;
-          } else {
-            html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeText(num))}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+        if (byDay[day] && byDay[day].length) {
+          const byNum = {};
+          byDay[day].forEach(l => { byNum[l.lesson_num || 0] = l; });
+          const dayMax = Math.max(...byDay[day].map(l => l.lesson_num || 0));
+          for (let num = 1; num <= dayMax; num++) {
+            const l = byNum[num];
+            if (l) {
+              html += `<div class="slot busy${l.manual ? ' manual' : ''}" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(l.class, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${xlink('class', l.class, l.class||'?')} - ${esc(l.subject||'?')} (каб. ${xlink('room', l.room, l.room||'?')})${manualControls(l)}</span><span class="slot-time">${esc(timeTextFor(l.class, num))}</span></div></div>`;
+            } else {
+              html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeText(num))}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeText(num))}<span class="add-slot-btn" data-day="${esc(day)}" data-lesson="${num}" data-ctx-type="teacher" data-ctx-value="${esc(teacher)}" title="Добавить занятие">➕</span></span></div></div>`;
+            }
           }
         }
+        customEntriesFor(day, 'teacher', teacher).forEach(ce => { html += renderCustomEntrySlot(ce, 'teacher'); });
       });
     }
     el.innerHTML = html;
@@ -1225,13 +1598,14 @@ function renderClassesTab() {
 
     dayOrder.forEach(day => {
       const dayLessons = classSchedule[day];
-      if (!dayLessons || !Object.keys(dayLessons).length) return;
+      const customToday = customEntriesFor(day, 'class', className);
+      if ((!dayLessons || !Object.keys(dayLessons).length) && !customToday.length) return;
       html += `<div class="day-title">${cap(day)}:</div>`;
-      const dayMax = Math.max(...Object.keys(dayLessons).map(Number));
+      const dayMax = dayLessons && Object.keys(dayLessons).length ? Math.max(...Object.keys(dayLessons).map(Number)) : 0;
       for (let num = 1; num <= dayMax; num++) {
         const lessons = dayLessons[num];
         if (!lessons || !lessons.length) {
-          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeTextFor(className, num))}</span></div></div>`;
+          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: Окно</span><span class="slot-time">${esc(timeTextFor(className, num))}<span class="add-slot-btn" data-day="${esc(day)}" data-lesson="${num}" data-ctx-type="class" data-ctx-value="${esc(className)}" title="Добавить занятие">➕</span></span></div></div>`;
           continue;
         }
         const bySubject = {};
@@ -1239,7 +1613,7 @@ function renderClassesTab() {
         const subjectEntries = Object.entries(bySubject);
         if (subjectEntries.length === 1 && subjectEntries[0][1].length === 1) {
           const l = subjectEntries[0][1][0];
-          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</span><span class="slot-time">${esc(timeTextFor(className, num))}</span></div></div>`;
+          html += `<div class="slot busy${l.manual ? ' manual' : ''}" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(subjectEntries[0][0])} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})${manualControls(l)}</span><span class="slot-time">${esc(timeTextFor(className, num))}</span></div></div>`;
         } else {
           const sameSubjectForAll = subjectEntries.length === 1;
           const headerText = sameSubjectForAll
@@ -1248,17 +1622,18 @@ function renderClassesTab() {
           let groupsHtml = '';
           subjectEntries.forEach(([subject, subjLessons]) => {
             if (subjLessons.length > 1) {
-              const parts = subjLessons.map(l => `${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})`);
+              const parts = subjLessons.map(l => `${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})${manualControls(l)}`);
               groupsHtml += `<div class="lesson-sub">${parts.join(' | ')}</div>`;
             } else {
               const l = subjLessons[0];
               const prefix = sameSubjectForAll ? '' : `${esc(subject)} - `;
-              groupsHtml += `<div class="lesson-sub">${prefix}${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})</div>`;
+              groupsHtml += `<div class="lesson-sub">${prefix}${xlink('teacher', l.teacher, l.teacher||'не указан')} (каб. ${xlink('room', l.room, l.room||'?')})${manualControls(l)}</div>`;
             }
           });
           html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(className, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(headerText)}</span><span class="slot-time">${esc(timeTextFor(className, num))}</span></div>${groupsHtml}</div>`;
         }
       }
+      customToday.forEach(ce => { html += renderCustomEntrySlot(ce, 'class'); });
     });
     el.innerHTML = html;
     applyTimeHighlight();
@@ -1439,30 +1814,32 @@ function renderRoomsTab() {
     const starIcon = isFavorite('room', room) ? '★' : '☆';
     let html = `<div style="font-size:20px;font-weight:700;margin-bottom:8px">Расписание кабинета: ${esc(room)}<span class="fav-toggle" data-type="room" data-name="${esc(room)}" title="Добавить/убрать из избранного">${starIcon}</span></div>`;
 
-    if (!roomLessons.length) {
+    const byDay = {};
+    roomLessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
+    const daysWithContent = dayOrder.filter(day => (byDay[day] && byDay[day].length) || customEntriesFor(day, 'room', room).length);
+
+    if (!daysWithContent.length) {
       html += `<div class="empty">В кабинете нет занятий</div>`;
       el.innerHTML = html;
       return;
     }
 
-    const byDay = {};
-    roomLessons.forEach(l => { (byDay[l.day] ??= []).push(l); });
-
-    dayOrder.forEach(day => {
-      if (!byDay[day] || !byDay[day].length) return;
-      const byNum = {};
-      byDay[day].forEach(l => { byNum[l.lesson_num || 0] = l; });
-      const dayMax = Math.max(...byDay[day].map(l => l.lesson_num || 0));
-
+    daysWithContent.forEach(day => {
       html += `<div class="day-title">${cap(day)}:</div>`;
-      for (let num = 1; num <= dayMax; num++) {
-        if (byNum[num]) {
-          const l = byNum[num];
-          html += `<div class="slot busy" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(l.class, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})</span><span class="slot-time">${esc(timeTextFor(l.class, num))}</span></div></div>`;
-        } else {
-          html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeText(num))}"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}</span></div></div>`;
+      if (byDay[day] && byDay[day].length) {
+        const byNum = {};
+        byDay[day].forEach(l => { byNum[l.lesson_num || 0] = l; });
+        const dayMax = Math.max(...byDay[day].map(l => l.lesson_num || 0));
+        for (let num = 1; num <= dayMax; num++) {
+          if (byNum[num]) {
+            const l = byNum[num];
+            html += `<div class="slot busy${l.manual ? ' manual' : ''}" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeTextFor(l.class, num))}"><div class="slot-row"><span class="slot-main">${num} урок: ${esc(l.subject||'?')} - ${xlink('teacher', l.teacher, l.teacher||'не указан')} (класс: ${xlink('class', l.class, l.class||'?')})${manualControls(l)}</span><span class="slot-time">${esc(timeTextFor(l.class, num))}</span></div></div>`;
+          } else {
+            html += `<div class="slot free" data-day="${esc(day)}" data-lesson="${num}" data-range="${esc(timeText(num))}"><div class="slot-row"><span class="slot-main">${num} урок: Кабинет свободен</span><span class="slot-time">${esc(timeText(num))}<span class="add-slot-btn" data-day="${esc(day)}" data-lesson="${num}" data-ctx-type="room" data-ctx-value="${esc(room)}" title="Добавить занятие">➕</span></span></div></div>`;
+          }
         }
       }
+      customEntriesFor(day, 'room', room).forEach(ce => { html += renderCustomEntrySlot(ce, 'room'); });
     });
 
     const LESSONS_PER_DAY = Object.keys(LESSON_TIMES_DEFAULT).length;
@@ -1653,8 +2030,10 @@ function renderRoomSearchTab() {
 (async function bootApp() {
   applyTheme(getTheme());
   setupDragAndDrop();
+  setupManualEntriesUI();
   setInterval(applyTimeHighlight, 60 * 1000);
   await syncAppVersionFromServiceWorker();
+  try { manualEntries = await loadManualEntries(); } catch (err) { manualEntries = []; }
   let saved = null;
   try { saved = await loadLastFile(); } catch (err) {}
   if (saved && saved.buffer) {
