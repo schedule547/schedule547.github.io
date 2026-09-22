@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Расписание547 v1.7.0</title>
+<title>Расписание547 v1.7.2</title>
 
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1a56db">
@@ -139,10 +139,27 @@
 
   .add-slot-btn{cursor:pointer;margin-left:6px;opacity:.6;}
   .add-slot-btn:hover{opacity:1;}
-  .del-manual-btn{cursor:pointer;margin-left:6px;opacity:.55;font-size:12.5px;}
-  .del-manual-btn:hover{opacity:1;}
-  .manual-badge{font-size:11px;margin-left:4px;}
+  .edit-manual-btn{cursor:pointer;margin-left:6px;opacity:.6;}
+  .edit-manual-btn:hover{opacity:1;}
+  .del-manual-btn{
+    cursor:pointer;margin-left:6px;font-size:13px;
+    color:var(--danger);background:rgba(178,59,59,.14);
+    border-radius:6px;padding:2px 6px;font-weight:600;
+  }
+  .del-manual-btn:hover{background:rgba(178,59,59,.28);}
   .slot.manual{border-style:dashed;border-color:var(--gold);}
+
+  .menu-wrap{position:relative;display:inline-block;}
+  .menu-toggle-btn{font-size:18px;line-height:1;padding:9px 14px;}
+  .menu-dropdown{
+    position:absolute;top:100%;right:0;margin-top:6px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);
+    padding:8px;min-width:230px;z-index:60;
+    display:none;flex-direction:column;gap:6px;
+  }
+  .menu-dropdown.open{display:flex;}
+  .menu-dropdown .btn{width:100%;justify-content:flex-start;}
 
   .sticky-header{
     position:sticky;
@@ -155,6 +172,7 @@
     display:flex;
     flex-wrap:wrap;
     align-items:center;
+    justify-content:space-between;
     gap:14px;
     padding-bottom:14px;
     border-bottom:1px solid var(--line);
@@ -182,10 +200,15 @@
   /* ---------- вкладки ---------- */
   .tabs{
     display:flex;
+    flex-wrap:nowrap;
     gap:4px;
     margin-top:20px;
     border-bottom:1px solid var(--line);
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
   }
+  .tabs::-webkit-scrollbar{display:none;}
   .tab-btn{
     appearance:none;
     background:none;
@@ -196,6 +219,8 @@
     cursor:pointer;
     border-bottom:2px solid transparent;
     margin-bottom:-1px;
+    flex:0 0 auto;
+    white-space:nowrap;
   }
   .tab-btn.active{
     color:var(--accent);
@@ -699,7 +724,12 @@ function customEntriesFor(day, ctxType, ctxValue) {
 }
 function manualControls(l) {
   if (!l || !l.manual) return '';
-  return ` <span class="manual-badge" title="Ручное дополнение">✏️</span><span class="del-manual-btn" data-manual-id="${esc(l.manualId)}" title="Удалить">🗑</span>`;
+  return ` <span class="edit-manual-btn" data-manual-id="${esc(l.manualId)}" title="Редактировать">✏️</span><span class="del-manual-btn" data-manual-id="${esc(l.manualId)}" title="Удалить">🗑</span>`;
+}
+function editManualEntry(id) {
+  const entry = manualEntries.find(e => e.id === id);
+  if (!entry) return;
+  openManualPanel(entry, id);
 }
 function renderCustomEntrySlot(e, ctxType) {
   const parts = [];
@@ -724,6 +754,7 @@ function deleteManualEntry(id) {
 /* ---------- Модальное окно управления ручными дополнениями ---------- */
 let manualModalMode = 'list'; // 'list' | 'form'
 let manualFormPrefill = null;
+let manualEditingId = null;
 
 function setupManualEntriesUI() {
   const overlay = document.createElement('div');
@@ -734,7 +765,8 @@ function setupManualEntriesUI() {
     if (e.target === overlay) closeManualModal(); // клик по тёмному фону — закрыть
   });
 }
-function openManualPanel(prefill) {
+function openManualPanel(prefill, editingId) {
+  manualEditingId = editingId || null;
   manualModalMode = prefill ? 'form' : 'list';
   manualFormPrefill = prefill || null;
   renderManualModal();
@@ -758,7 +790,7 @@ function renderManualForm(prefill) {
   const isCustom = !!p.customTime;
   return `
     <div class="modal-box">
-      <div class="modal-title">➕ Ручное занятие</div>
+      <div class="modal-title">${manualEditingId ? '✏️ Редактировать занятие' : '➕ Ручное занятие'}</div>
       <div class="field-row">
         <label>День недели</label>
         <select id="mfDay">${dayOrder.map(d => `<option value="${esc(d)}" ${p.day === d ? 'selected' : ''}>${cap(d)}</option>`).join('')}</select>
@@ -812,7 +844,7 @@ function renderManualList() {
     <div class="slot busy manual">
       <div class="slot-row">
         <span class="slot-main">${cap(e.day)}, ${e.customTime ? esc(e.customTime) : e.lessonNum + ' урок'}: ${esc(e.subject)}${e.teacher ? ' — ' + esc(e.teacher) : ''}${e.class ? ' (' + esc(e.class) + ')' : ''}${e.room ? ', каб. ' + esc(e.room) : ''}</span>
-        <span class="del-manual-btn" data-manual-id="${esc(e.id)}" title="Удалить">🗑</span>
+        <span><span class="edit-manual-btn" data-manual-id="${esc(e.id)}" title="Редактировать">✏️</span><span class="del-manual-btn" data-manual-id="${esc(e.id)}" title="Удалить">🗑</span></span>
       </div>
       ${e.note ? `<div class="lesson-sub">${esc(e.note)}</div>` : ''}
     </div>
@@ -821,11 +853,6 @@ function renderManualList() {
   return `
     <div class="modal-box">
       <div class="modal-title">✏️ Ручные дополнения (${manualEntries.length})</div>
-      <p style="font-size:17px;color:var(--muted);margin:-4px 0 12px">
-        ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  
-        ЭТА ФУНКЦИЯ НАХОДИТСЯ НА СТАДИИ ТЕСТИРОВАНИЯ
-        ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  
-      </p>
       <p style="font-size:12.5px;color:var(--muted);margin:-4px 0 12px">
         Добавляются кнопкой «➕» на свободных уроках («Окно») в расписании или через кнопку ниже.
         Хранятся отдельно от файла расписания и сохраняются автоматически на этом устройстве.
@@ -852,15 +879,18 @@ function wireManualModalEvents() {
       lessonSel.style.display = isCustom ? 'none' : '';
       customInp.style.display = isCustom ? '' : 'none';
     }));
-    document.getElementById('mfCancelBtn').addEventListener('click', () => { manualModalMode = 'list'; renderManualModal(); });
+    document.getElementById('mfCancelBtn').addEventListener('click', () => { manualModalMode = 'list'; manualEditingId = null; renderManualModal(); });
     document.getElementById('mfSaveBtn').addEventListener('click', submitManualForm);
   } else {
-    document.getElementById('mAddBtn').addEventListener('click', () => { manualModalMode = 'form'; manualFormPrefill = null; renderManualModal(); });
+    document.getElementById('mAddBtn').addEventListener('click', () => { manualModalMode = 'form'; manualFormPrefill = null; manualEditingId = null; renderManualModal(); });
     document.getElementById('mExportBtn').addEventListener('click', exportManualEntries);
     document.getElementById('mImportInput').addEventListener('change', importManualEntriesFile);
     document.getElementById('mCloseBtn').addEventListener('click', closeManualModal);
     document.querySelectorAll('#manualModalOverlay .del-manual-btn').forEach(btn => {
       btn.addEventListener('click', () => deleteManualEntry(btn.dataset.manualId));
+    });
+    document.querySelectorAll('#manualModalOverlay .edit-manual-btn').forEach(btn => {
+      btn.addEventListener('click', () => editManualEntry(btn.dataset.manualId));
     });
   }
 }
@@ -889,7 +919,13 @@ function submitManualForm() {
     if (!confirm('Не указаны ни учитель, ни класс, ни кабинет — занятие не будет видно ни в одной вкладке расписания. Всё равно сохранить?')) return;
   }
 
-  manualEntries.push({ id: genManualId(), day, lessonNum, customTime, subject, teacher, class: cls, room, note });
+  if (manualEditingId) {
+    const idx = manualEntries.findIndex(e => e.id === manualEditingId);
+    if (idx >= 0) manualEntries[idx] = { ...manualEntries[idx], day, lessonNum, customTime, subject, teacher, class: cls, room, note };
+  } else {
+    manualEntries.push({ id: genManualId(), day, lessonNum, customTime, subject, teacher, class: cls, room, note });
+  }
+  manualEditingId = null;
   saveManualEntries();
   rebuildScheduleData();
   manualModalMode = 'list';
@@ -936,7 +972,7 @@ function importManualEntriesFile(e) {
 const app = document.getElementById('app');
 const dayOrder = DAYS;
 const APP_NAME = 'Расписание547';
-let APP_VERSION = '1.7.0'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
+let APP_VERSION = '1.7.2'; // запасное значение на случай, если sw.js не удастся прочитать (например, файл открыт как file://)
 const APP_AUTHOR = 'Вощиков Л.Д.';
 const APP_SCHOOL = 'ГБОУ СОШ №547 Красносельского района Санкт-Петербурга';
 const LESSON_TIMES_GRADE1 = {
@@ -1156,6 +1192,8 @@ function renderFavoritesStrip() {
 function activateTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tabId));
+  const activeBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+  if (activeBtn) activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
 }
 
 function goTo(type, name) {
@@ -1175,11 +1213,20 @@ function goTo(type, name) {
 }
 
 app.addEventListener('click', (e) => {
+  const menuToggle = e.target.closest('.menu-toggle-btn');
+  if (menuToggle) {
+    document.getElementById('topMenuDropdown')?.classList.toggle('open');
+    return;
+  }
+  if (!e.target.closest('.menu-dropdown')) {
+    document.getElementById('topMenuDropdown')?.classList.remove('open');
+  }
+
   const secretTap = e.target.closest('.secret-tap');
   if (secretTap) { registerSecretTap(); return; }
 
   const themeBtn = e.target.closest('.theme-toggle');
-  if (themeBtn) { toggleTheme(); return; }
+  if (themeBtn) { document.getElementById('topMenuDropdown')?.classList.remove('open'); toggleTheme(); return; }
 
   const link = e.target.closest('.xlink');
   if (link) { goTo(link.dataset.type, link.dataset.name); return; }
@@ -1210,10 +1257,12 @@ app.addEventListener('click', (e) => {
     openManualPanel(prefill);
     return;
   }
+  const editManual = e.target.closest('.edit-manual-btn');
+  if (editManual) { editManualEntry(editManual.dataset.manualId); return; }
   const delManual = e.target.closest('.del-manual-btn');
   if (delManual) { deleteManualEntry(delManual.dataset.manualId); return; }
   const manualBtn = e.target.closest('.manual-entries-btn');
-  if (manualBtn) { openManualPanel(null); return; }
+  if (manualBtn) { document.getElementById('topMenuDropdown')?.classList.remove('open'); openManualPanel(null); return; }
 });
 
 /* =========================================================
@@ -1470,14 +1519,19 @@ function renderMain() {
   app.innerHTML = `
     <div class="sticky-header">
       <div class="topbar">
-        <label class="btn secondary" for="fileInput2">📁 Загрузить файл Excel</label>
-        <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none">
         <div class="status ok secret-tap" title="">Загружен: ${esc(currentFileName)}</div>
-        <button class="btn secondary manual-entries-btn" type="button">✏️ Ручные${manualEntries.length ? ' (' + manualEntries.length + ')' : ''}</button>
-        ${themeToggleButtonHtml()}
+        <div class="menu-wrap">
+          <button class="btn secondary menu-toggle-btn" type="button" title="Меню">⋮</button>
+          <div class="menu-dropdown" id="topMenuDropdown">
+            <label class="btn secondary" for="fileInput2">📁 Загрузить файл Excel</label>
+            <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none">
+            <button class="btn secondary manual-entries-btn" type="button">✏️ Ручные${manualEntries.length ? ' (' + manualEntries.length + ')' : ''}</button>
+            ${themeToggleButtonHtml()}
+          </div>
+        </div>
       </div>
-      <div class="stats" id="stats"></div>
       <div class="favorites-strip" id="favoritesStrip"></div>
+      <div class="stats" id="stats"></div>
       <div class="tabs">
         <button class="tab-btn active" data-tab="teachers">👨‍🏫 Учителя</button>
         <button class="tab-btn" data-tab="classes">👥 Классы</button>
